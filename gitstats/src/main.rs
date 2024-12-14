@@ -64,7 +64,13 @@ struct MyApp {
     selected_branch: String,
     selected_contributor: String,
     available_branches: Vec<String>,
-    analysis_cache: HashMap<String, AnalysisResult>,
+    analysis_cache: HashMap<CacheKey, AnalysisResult>,
+}
+
+#[derive(Clone, Hash, Eq, PartialEq)]
+struct CacheKey {
+    branch: String,
+    contributor: String,
 }
 
 impl Default for MyApp {
@@ -112,6 +118,7 @@ impl MyApp {
             // Branch selection
             if !self.available_branches.is_empty() {
                 ui.label("Branch:");
+                let prev_branch = self.selected_branch.clone();
                 egui::ComboBox::new("branch_selector", "")
                     .selected_text(&self.selected_branch)
                     .show_ui(ui, |ui| {
@@ -119,6 +126,35 @@ impl MyApp {
                             ui.selectable_value(&mut self.selected_branch, branch.clone(), branch);
                         }
                     });
+
+                // If branch changed, check cache first
+                if prev_branch != self.selected_branch {
+                    if let Some(cached_result) = self.get_cached_result(&self.selected_branch, &self.selected_contributor) {
+                        // Use cached result
+                        self.update_with_result(cached_result);
+                    } else {
+                        // No cache, perform analysis
+                        let repo_path = self.repo_path.clone();
+                        let app_clone = Arc::clone(&app);
+                        let selected_branch = self.selected_branch.clone();
+                        let selected_contributor = self.selected_contributor.clone();
+                        self.is_analyzing = true;
+
+                        tokio::spawn(async move {
+                            match analyze_repo_async(repo_path, selected_branch, selected_contributor).await {
+                                Ok(result) => {
+                                    let mut app = app_clone.lock().unwrap();
+                                    app.update_with_result(result);
+                                }
+                                Err(e) => {
+                                    eprintln!("Error: {}", e);
+                                }
+                            }
+                            let mut app = app_clone.lock().unwrap();
+                            app.is_analyzing = false;
+                        });
+                    }
+                }
             }
 
             // Contributor selection
@@ -142,33 +178,30 @@ impl MyApp {
                 
                 // If contributor changed, check cache first
                 if prev_contributor != self.selected_contributor {
-                    let cached_result = self.analysis_cache.get(&self.selected_contributor).cloned();
-                    match cached_result {
-                        Some(result) => {
-                            // Use cached result
-                            self.update_with_result(result);
-                        }
-                        None => {
-                            // No cache, perform analysis
-                            let repo_path = self.repo_path.clone();
-                            let app_clone = Arc::clone(&app);
-                            let selected_contributor = self.selected_contributor.clone();
-                            self.is_analyzing = true;
+                    if let Some(cached_result) = self.get_cached_result(&self.selected_branch, &self.selected_contributor) {
+                        // Use cached result
+                        self.update_with_result(cached_result);
+                    } else {
+                        // No cache, perform analysis
+                        let repo_path = self.repo_path.clone();
+                        let app_clone = Arc::clone(&app);
+                        let selected_branch = self.selected_branch.clone();
+                        let selected_contributor = self.selected_contributor.clone();
+                        self.is_analyzing = true;
 
-                            tokio::spawn(async move {
-                                match analyze_repo_async(repo_path, selected_contributor).await {
-                                    Ok(result) => {
-                                        let mut app = app_clone.lock().unwrap();
-                                        app.update_with_result(result);
-                                    }
-                                    Err(e) => {
-                                        eprintln!("Error: {}", e);
-                                    }
+                        tokio::spawn(async move {
+                            match analyze_repo_async(repo_path, selected_branch, selected_contributor).await {
+                                Ok(result) => {
+                                    let mut app = app_clone.lock().unwrap();
+                                    app.update_with_result(result);
                                 }
-                                let mut app = app_clone.lock().unwrap();
-                                app.is_analyzing = false;
-                            });
-                        }
+                                Err(e) => {
+                                    eprintln!("Error: {}", e);
+                                }
+                            }
+                            let mut app = app_clone.lock().unwrap();
+                            app.is_analyzing = false;
+                        });
                     }
                 }
             }
@@ -206,11 +239,12 @@ impl MyApp {
             if ui.button("Analyze").clicked() && !self.is_analyzing {
                 let repo_path = self.repo_path.clone();
                 let app_clone = Arc::clone(&app);
+                let selected_branch = self.selected_branch.clone();
                 let selected_contributor = self.selected_contributor.clone();
                 self.is_analyzing = true;
 
                 tokio::spawn(async move {
-                    match analyze_repo_with_filter(&repo_path, &selected_contributor) {
+                    match analyze_repo_async(repo_path, selected_branch, selected_contributor).await {
                         Ok(result) => {
                             let mut app = app_clone.lock().unwrap();
                             app.update_with_result(result);
@@ -264,12 +298,25 @@ impl MyApp {
         // Store all contributors if this is the first analysis or if viewing all contributors
         if self.all_contributors.is_empty() || self.selected_contributor == "All" {
             self.all_contributors = result.top_contributors.clone();
-            // Cache the "All" result
-            self.analysis_cache.insert("All".to_string(), result.clone());
-        } else {
-            // Cache the individual contributor result
-            self.analysis_cache.insert(self.selected_contributor.clone(), result.clone());
         }
+        
+        // Update available branches
+        if self.available_branches.is_empty() {
+            self.available_branches = result.available_branches.clone();
+            // Set default branch if not already set
+            if self.selected_branch.is_empty() {
+                self.selected_branch = self.available_branches.first()
+                    .cloned()
+                    .unwrap_or_else(|| "main".to_string());
+            }
+        }
+        
+        // Cache the result using both branch and contributor
+        let cache_key = CacheKey {
+            branch: self.selected_branch.clone(),
+            contributor: self.selected_contributor.clone(),
+        };
+        self.analysis_cache.insert(cache_key, result.clone());
         
         self.commit_count = result.commit_count;
         self.total_lines_added = result.total_lines_added;
@@ -618,6 +665,14 @@ impl MyApp {
         }
         aggregated
     }
+
+    fn get_cached_result(&self, branch: &str, contributor: &str) -> Option<AnalysisResult> {
+        let cache_key = CacheKey {
+            branch: branch.to_string(),
+            contributor: contributor.to_string(),
+        };
+        self.analysis_cache.get(&cache_key).cloned()
+    }
 }
 
 #[derive(Clone)]
@@ -630,18 +685,60 @@ struct AnalysisResult {
     average_commit_size: f64,
     commit_frequency: HashMap<String, usize>,
     top_contributors_by_lines: Vec<(String, usize)>,
+    available_branches: Vec<String>,
 }
 
-async fn analyze_repo_async(path: String, contributor: String) -> Result<AnalysisResult, Error> {
-    tokio::task::spawn_blocking(move || analyze_repo_with_filter(&path, &contributor))
+async fn analyze_repo_async(path: String, branch: String, contributor: String) -> Result<AnalysisResult, Error> {
+    tokio::task::spawn_blocking(move || analyze_repo_with_filter(&path, &branch, &contributor))
         .await
         .map_err(|e| Error::from_str(&e.to_string()))?
 }
 
-fn analyze_repo_with_filter(path: &str, contributor: &str) -> Result<AnalysisResult, Error> {
+fn get_available_branches(repo: &Repository) -> Result<Vec<String>, Error> {
+    let mut branch_names = Vec::new();
+    let branches = repo.branches(None)?;
+    
+    for branch in branches {
+        if let Ok((branch, _)) = branch {
+            if let Ok(name) = branch.name() {
+                if let Some(name) = name {
+                    branch_names.push(name.to_string());
+                }
+            }
+        }
+    }
+    
+    // Sort branches alphabetically
+    branch_names.sort();
+    
+    // Ensure "main" or "master" is first if present
+    if let Some(main_idx) = branch_names.iter().position(|x| x == "main") {
+        branch_names.swap(0, main_idx);
+    } else if let Some(master_idx) = branch_names.iter().position(|x| x == "master") {
+        branch_names.swap(0, master_idx);
+    }
+    
+    Ok(branch_names)
+}
+
+fn analyze_repo_with_filter(path: &str, branch: &str, contributor: &str) -> Result<AnalysisResult, Error> {
     let repo = Repository::open(path)?;
+    
+    // Get available branches first
+    let branches = get_available_branches(&repo)?;
+    
     let mut revwalk = repo.revwalk()?;
-    revwalk.push_head()?;
+    
+    // Set up branch filtering
+    if let Ok(branch_ref) = repo.find_branch(branch, git2::BranchType::Local) {
+        if let Some(branch_ref_name) = branch_ref.get().name() {
+            revwalk.push_ref(branch_ref_name)?;
+        } else {
+            revwalk.push_head()?;
+        }
+    } else {
+        revwalk.push_head()?;
+    }
 
     let mut commit_count = 0;
     let mut total_lines_added = 0;
@@ -719,5 +816,6 @@ fn analyze_repo_with_filter(path: &str, contributor: &str) -> Result<AnalysisRes
         average_commit_size,
         commit_frequency,
         top_contributors_by_lines,
+        available_branches: branches,
     })
 }
