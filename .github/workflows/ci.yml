@@ -98,6 +98,93 @@ jobs:
       - name: Run clippy
         run: cargo clippy -- -D warnings
 
+  benchmark:
+    name: Performance Analysis
+    runs-on: ubuntu-latest
+    # Only run on PRs and main branch
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Needed to get all history for comparison
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libssl-dev \
+            gnuplot
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Download baseline
+        # Only if baseline exists
+        continue-on-error: true
+        run: |
+          mkdir -p benchmarks/baseline
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin main:main
+            git checkout main -- benchmarks/baseline || true
+          fi
+      
+      - name: Run benchmarks
+        continue-on-error: true  # Don't fail the build on performance regressions
+        run: |
+          # Run benchmarks and compare against baseline if it exists
+          if [ -d "benchmarks/baseline" ]; then
+            cargo bench -- --baseline benchmarks/baseline
+          else
+            cargo bench
+          fi
+      
+      - name: Process benchmark results
+        continue-on-error: true
+        run: |
+          echo "### Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "Full report available in job artifacts" >> $GITHUB_STEP_SUMMARY
+          
+          if [ -f "target/criterion/report/index.html" ]; then
+            echo "#### Changes from baseline:" >> $GITHUB_STEP_SUMMARY
+            # Extract and format relevant parts of the criterion report
+            grep -A 5 "Performance change" target/criterion/*/report/*.txt 2>/dev/null || echo "No significant changes detected" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No benchmark results found" >> $GITHUB_STEP_SUMMARY
+          fi
+      
+      - name: Upload benchmark results
+        if: always()  # Upload even if benchmarks show regression
+        uses: actions/upload-artifact@v3
+        with:
+          name: benchmark-results
+          path: |
+            target/criterion
+            benchmarks/baseline
+          retention-days: 30
+
+      - name: Update baseline
+        # Only update baseline on main branch
+        if: github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p benchmarks/baselines/$(date +%Y%m%d)
+          cp -r target/criterion/* benchmarks/baselines/$(date +%Y%m%d)
+          cp -r target/criterion/* benchmarks/baseline
+          
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          
+          git add benchmarks/
+          git commit -m "Update benchmark baseline [skip ci]" || echo "No changes to commit"
+          git push origin HEAD:main || echo "No changes to push"
+
   docs:
     name: Documentation
     runs-on: ubuntu-latest
@@ -115,4 +202,4 @@ jobs:
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./target/doc 
+          publish_dir: ./target/doc

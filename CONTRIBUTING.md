@@ -86,4 +86,4 @@ cargo test
 
 Feel free to create an issue labeled as 'question' if you need help or clarification.
 
-Thank you for contributing to GitStats! 🎉 
+Thank you for contributing to GitStats! 🎉

@@ -22,9 +22,10 @@ GitStats provides interactive visualizations and insights into your Git reposito
 ## Installation
 
 ### From Source
+
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/gitstats.git
+git clone https://github.com/tcashel/gitstats.git
 cd gitstats
 
 # Build and install
@@ -32,6 +33,7 @@ cargo install --path .
 ```
 
 ### From Crates.io (Coming Soon)
+
 ```bash
 cargo install gitstats
 ```
@@ -39,6 +41,7 @@ cargo install gitstats
 ## Usage
 
 1. Launch GitStats:
+
    ```bash
    gitstats
    ```
@@ -54,6 +57,7 @@ cargo install gitstats
 ## Development
 
 ### Prerequisites
+
 - Rust 1.83 or higher
 - Git 2.39 or higher
 - gnuplot (optional, for better benchmark visualizations)
@@ -70,11 +74,13 @@ cargo install gitstats
   ```
 
 ### Building
+
 ```bash
 cargo build --release
 ```
 
 ### Running Tests
+
 ```bash
 # Run unit tests
 cargo test
@@ -111,39 +117,58 @@ GitStats includes comprehensive benchmarks to measure and track performance:
   - Cache lookup performance
 
 #### Benchmark Results
+
 Benchmark results are generated using criterion.rs and include:
+
 - Statistical analysis
 - Performance graphs
 - Historical comparisons
 - HTML reports (in `target/criterion`)
 
+More information can be found in the [benchmarks/README.md](benchmarks/README.md) file.
+
 #### Tracking Performance Over Time
+
 Criterion.rs automatically saves benchmark results and generates comparison reports. To track performance:
 
-1. **View Current Results**:
+1. **Initial Setup**:
+
+   ```bash
+   # Run benchmarks to generate initial data
+   cargo bench
+
+   # Create benchmark directories
+   mkdir -p benchmarks/baselines
+   mkdir -p benchmarks/baseline
+
+   # Save initial baseline
+   cp -r target/criterion/* benchmarks/baselines/$(date +%Y%m%d)
+   cp -r target/criterion/* benchmarks/baseline
+   ```
+
+2. **View Results**:
    ```bash
    # After running benchmarks, open the HTML report
    open target/criterion/report/index.html
    ```
 
-2. **Track Changes**:
-   - Criterion saves baseline measurements in `benchmarks/baseline`
-   - Each new benchmark run compares against the baseline
-   - Changes are highlighted in the report with statistical significance
+3. **Track Changes**:
+   - Latest results are in `target/criterion/`
+   - Baselines are stored in `benchmarks/`
+   - Each run compares against the baseline
+   - Changes are highlighted with statistical significance
 
-3. **Save Baselines**:
+4. **Save New Baselines**:
    ```bash
-   # Create benchmarks directory if it doesn't exist
-   mkdir -p benchmarks/baselines
+   # Run the benchmarks
+   cargo bench
 
-   # Save current results as baseline
-   cp -r target/criterion/baseline benchmarks/baselines/$(date +%Y%m%d)
-   
-   # Update current baseline
-   cp -r target/criterion/baseline benchmarks/baseline
+   # Save as new baseline
+   cp -r target/criterion/* benchmarks/baselines/$(date +%Y%m%d)
+   cp -r target/criterion/* benchmarks/baseline
    ```
 
-4. **Compare with Previous**:
+5. **Compare with Previous**:
    ```bash
    # Compare with saved baseline
    cargo bench -- --baseline benchmarks/baseline
@@ -152,13 +177,14 @@ Criterion.rs automatically saves benchmark results and generates comparison repo
    cargo bench -- --baseline benchmarks/baselines/20231201
    ```
 
-5. **Continuous Integration**:
+6. **Continuous Integration**:
    - The CI workflow includes benchmark runs
    - Results are compared against the main branch baseline
    - Performance regressions are flagged in PR reviews
    - Baselines are stored in the repository under `benchmarks/`
 
 ### Generate Documentation
+
 ```bash
 cargo doc --no-deps --open
 ```
@@ -193,8 +219,5 @@ GitStats is under active development. We welcome feedback, bug reports, and cont
 
 ## Contact
 
-- Create an issue: [https://github.com/yourusername/gitstats/issues](https://github.com/yourusername/gitstats/issues)
-- Follow on Twitter: [@yourusername](https://twitter.com/yourusername)
+- Create an issue: [https://github.com/tcashel/gitstats/issues](https://github.com/tcashel/gitstats/issues)
 
----
-Made with ❤️ by [Your Name]
