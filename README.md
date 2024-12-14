@@ -1,9 +1,10 @@
 # GitStats
 
-A modern, fast Git repository analyzer and visualization tool built in Rust.
+📊 A high-performance Git repository analyzer with interactive visualizations. Built in Rust for speed and efficiency, GitStats provides deep insights into commit patterns, code changes, and contributor dynamics with a modern, dark-themed UI.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Documentation](https://img.shields.io/badge/docs-online-blue.svg)](https://tcashel.github.io/gitstats/)
+[![Benchmarks](https://img.shields.io/badge/benchmarks-view-green.svg)](https://tcashel.github.io/gitstats/benchmarks/)
 
 | Status | Description |
 |--------|-------------|
