@@ -7,6 +7,21 @@ This directory contains benchmark baselines and historical results for GitStats.
 - `baseline/` - Current baseline for comparison
 - `baselines/` - Historical baseline snapshots (YYYYMMDD format)
 
+## Initial Setup
+
+```bash
+# Run benchmarks to generate initial data
+cargo bench
+
+# Create directory structure
+mkdir -p benchmarks/baselines
+mkdir -p benchmarks/baseline
+
+# Save initial baseline
+cp -r target/criterion/* benchmarks/baselines/$(date +%Y%m%d)
+cp -r target/criterion/* benchmarks/baseline
+```
+
 ## Running Benchmarks
 
 ```bash
@@ -20,10 +35,12 @@ cargo bench -- --baseline benchmarks/baselines/20231201
 ## Saving New Baselines
 
 ```bash
-# Save current results as new baseline
-mkdir -p benchmarks/baselines
-cp -r target/criterion/baseline benchmarks/baselines/$(date +%Y%m%d)
-cp -r target/criterion/baseline benchmarks/baseline
+# Run the benchmarks
+cargo bench
+
+# Save as new baseline
+cp -r target/criterion/* benchmarks/baselines/$(date +%Y%m%d)
+cp -r target/criterion/* benchmarks/baseline
 ```
 
 ## Interpreting Results
@@ -37,4 +54,6 @@ cp -r target/criterion/baseline benchmarks/baseline
 
 - Baselines are stored in version control
 - CI uses these baselines for regression testing
-- Historical baselines help track performance over time 
+- Historical baselines help track performance over time
+- The `target/criterion/` directory contains the latest run results
+- Baselines in this directory are used for comparison
