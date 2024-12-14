@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use image::ImageReader;
 use tokio::runtime::Runtime;
 use std::sync::{Arc, Mutex};
-use chrono::Datelike;
 
 fn main() {
     // Initialize the Tokio runtime
@@ -51,6 +50,7 @@ struct MyApp {
     total_lines_added: usize,
     total_lines_deleted: usize,
     top_contributors: Vec<(String, usize)>,
+    all_contributors: Vec<(String, usize)>,
     commit_activity: Vec<(String, usize, usize)>,
     plot_path: String,
     plot_texture: Option<TextureHandle>,
@@ -61,6 +61,10 @@ struct MyApp {
     update_needed: bool,
     is_analyzing: bool,
     use_log_scale: bool,
+    selected_branch: String,
+    selected_contributor: String,
+    available_branches: Vec<String>,
+    analysis_cache: HashMap<String, AnalysisResult>,
 }
 
 impl Default for MyApp {
@@ -71,6 +75,7 @@ impl Default for MyApp {
             total_lines_added: 0,
             total_lines_deleted: 0,
             top_contributors: Vec::new(),
+            all_contributors: Vec::new(),
             commit_activity: Vec::new(),
             plot_path: "commit_activity.png".to_string(),
             plot_texture: None,
@@ -81,6 +86,10 @@ impl Default for MyApp {
             update_needed: false,
             is_analyzing: false,
             use_log_scale: false,
+            selected_branch: "main".to_string(),
+            selected_contributor: "All".to_string(),
+            available_branches: Vec::new(),
+            analysis_cache: HashMap::new(),
         }
     }
 }
@@ -98,6 +107,72 @@ impl MyApp {
 
         egui::SidePanel::left("side_panel").show(ctx, |ui| {
             ui.heading("Analysis Options");
+            ui.separator();
+
+            // Branch selection
+            if !self.available_branches.is_empty() {
+                ui.label("Branch:");
+                egui::ComboBox::new("branch_selector", "")
+                    .selected_text(&self.selected_branch)
+                    .show_ui(ui, |ui| {
+                        for branch in &self.available_branches {
+                            ui.selectable_value(&mut self.selected_branch, branch.clone(), branch);
+                        }
+                    });
+            }
+
+            // Contributor selection
+            if !self.all_contributors.is_empty() {
+                ui.label("Contributor:");
+                let mut contributors: Vec<String> = self.all_contributors
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect();
+                contributors.sort();
+                contributors.insert(0, "All".to_string());
+                
+                let prev_contributor = self.selected_contributor.clone();
+                egui::ComboBox::new("contributor_selector", "")
+                    .selected_text(&self.selected_contributor)
+                    .show_ui(ui, |ui| {
+                        for contributor in &contributors {
+                            ui.selectable_value(&mut self.selected_contributor, contributor.clone(), contributor);
+                        }
+                    });
+                
+                // If contributor changed, check cache first
+                if prev_contributor != self.selected_contributor {
+                    let cached_result = self.analysis_cache.get(&self.selected_contributor).cloned();
+                    match cached_result {
+                        Some(result) => {
+                            // Use cached result
+                            self.update_with_result(result);
+                        }
+                        None => {
+                            // No cache, perform analysis
+                            let repo_path = self.repo_path.clone();
+                            let app_clone = Arc::clone(&app);
+                            let selected_contributor = self.selected_contributor.clone();
+                            self.is_analyzing = true;
+
+                            tokio::spawn(async move {
+                                match analyze_repo_async(repo_path, selected_contributor).await {
+                                    Ok(result) => {
+                                        let mut app = app_clone.lock().unwrap();
+                                        app.update_with_result(result);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Error: {}", e);
+                                    }
+                                }
+                                let mut app = app_clone.lock().unwrap();
+                                app.is_analyzing = false;
+                            });
+                        }
+                    }
+                }
+            }
+
             ui.separator();
 
             if ui.button("Commits").clicked() {
@@ -131,10 +206,11 @@ impl MyApp {
             if ui.button("Analyze").clicked() && !self.is_analyzing {
                 let repo_path = self.repo_path.clone();
                 let app_clone = Arc::clone(&app);
+                let selected_contributor = self.selected_contributor.clone();
                 self.is_analyzing = true;
 
                 tokio::spawn(async move {
-                    match analyze_repo_async(repo_path).await {
+                    match analyze_repo_with_filter(&repo_path, &selected_contributor) {
                         Ok(result) => {
                             let mut app = app_clone.lock().unwrap();
                             app.update_with_result(result);
@@ -185,69 +261,25 @@ impl MyApp {
     }
 
     fn update_with_result(&mut self, result: AnalysisResult) {
+        // Store all contributors if this is the first analysis or if viewing all contributors
+        if self.all_contributors.is_empty() || self.selected_contributor == "All" {
+            self.all_contributors = result.top_contributors.clone();
+            // Cache the "All" result
+            self.analysis_cache.insert("All".to_string(), result.clone());
+        } else {
+            // Cache the individual contributor result
+            self.analysis_cache.insert(self.selected_contributor.clone(), result.clone());
+        }
+        
         self.commit_count = result.commit_count;
         self.total_lines_added = result.total_lines_added;
         self.total_lines_deleted = result.total_lines_deleted;
-        self.top_contributors = result.top_contributors.clone();
-        self.commit_activity = result.commit_activity.clone();
+        self.top_contributors = result.top_contributors;
+        self.commit_activity = result.commit_activity;
         self.average_commit_size = result.average_commit_size;
-        self.commit_frequency = result.commit_frequency.clone();
-        self.top_contributors_by_lines = result.top_contributors_by_lines.clone();
-        self.update_needed = true; // Ensure this is set
-    }
-
-    fn aggregate_data(&self) -> Vec<(String, usize, usize)> {
-        if self.commit_activity.len() < 1000 {
-            // For small repos, return the original data
-            return self.commit_activity.clone();
-        }
-
-        // For large repos, aggregate by week or month depending on size
-        let use_monthly = self.commit_activity.len() > 5000;
-        let mut aggregated_data: HashMap<String, (usize, usize)> = HashMap::new();
-
-        for (date, added, deleted) in &self.commit_activity {
-            // Extract year-month or year-week from date
-            let period = if use_monthly {
-                // Use year-month (YYYY-MM)
-                date[..7].to_string()
-            } else {
-                // Use year-week (YYYY-WW)
-                let dt = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap_or_default();
-                format!("{}-W{:02}", dt.year(), dt.iso_week().week())
-            };
-
-            let entry = aggregated_data.entry(period).or_insert((0, 0));
-            entry.0 += added;
-            entry.1 += deleted;
-        }
-
-        // Convert to sorted vec
-        let mut result: Vec<(String, usize, usize)> = aggregated_data
-            .into_iter()
-            .map(|(date, (added, deleted))| (date, added, deleted))
-            .collect();
-        result.sort_by(|a, b| a.0.cmp(&b.0));
-        result
-    }
-
-    fn smart_aggregate_data(&self) -> Vec<(String, usize, usize)> {
-        if self.commit_activity.len() < 1000 {
-            return self.commit_activity.clone();
-        }
-
-        // Target number of data points for good visualization
-        let target_points = 500;
-        let window_size = (self.commit_activity.len() as f64 / target_points as f64).ceil() as usize;
-
-        let mut aggregated = Vec::new();
-        for chunk in self.commit_activity.chunks(window_size) {
-            let date = chunk[0].0.clone(); // Use first date in chunk
-            let total_added: usize = chunk.iter().map(|(_, added, _)| *added).sum();
-            let total_deleted: usize = chunk.iter().map(|(_, _, deleted)| *deleted).sum();
-            aggregated.push((date, total_added, total_deleted));
-        }
-        aggregated
+        self.commit_frequency = result.commit_frequency;
+        self.top_contributors_by_lines = result.top_contributors_by_lines;
+        self.update_needed = true;
     }
 
     fn calculate_adaptive_range(&self, values: &[f64]) -> (f64, f64) {
@@ -567,6 +599,25 @@ impl MyApp {
             eprintln!("Failed to load plot image");
         }
     }
+
+    fn smart_aggregate_data(&self) -> Vec<(String, usize, usize)> {
+        if self.commit_activity.len() < 1000 {
+            return self.commit_activity.clone();
+        }
+
+        // Target number of data points for good visualization
+        let target_points = 500;
+        let window_size = (self.commit_activity.len() as f64 / target_points as f64).ceil() as usize;
+
+        let mut aggregated = Vec::new();
+        for chunk in self.commit_activity.chunks(window_size) {
+            let date = chunk[0].0.clone(); // Use first date in chunk
+            let total_added: usize = chunk.iter().map(|(_, added, _)| *added).sum();
+            let total_deleted: usize = chunk.iter().map(|(_, _, deleted)| *deleted).sum();
+            aggregated.push((date, total_added, total_deleted));
+        }
+        aggregated
+    }
 }
 
 #[derive(Clone)]
@@ -581,13 +632,13 @@ struct AnalysisResult {
     top_contributors_by_lines: Vec<(String, usize)>,
 }
 
-async fn analyze_repo_async(path: String) -> Result<AnalysisResult, Error> {
-    tokio::task::spawn_blocking(move || analyze_repo(&path))
+async fn analyze_repo_async(path: String, contributor: String) -> Result<AnalysisResult, Error> {
+    tokio::task::spawn_blocking(move || analyze_repo_with_filter(&path, &contributor))
         .await
         .map_err(|e| Error::from_str(&e.to_string()))?
 }
 
-fn analyze_repo(path: &str) -> Result<AnalysisResult, Error> {
+fn analyze_repo_with_filter(path: &str, contributor: &str) -> Result<AnalysisResult, Error> {
     let repo = Repository::open(path)?;
     let mut revwalk = repo.revwalk()?;
     revwalk.push_head()?;
@@ -601,9 +652,14 @@ fn analyze_repo(path: &str) -> Result<AnalysisResult, Error> {
     for oid in revwalk {
         let oid = oid?;
         let commit = repo.find_commit(oid)?;
-        commit_count += 1;
-
         let author = commit.author().name().unwrap_or("Unknown").to_string();
+
+        // Skip if not the selected contributor
+        if contributor != "All" && author != contributor {
+            continue;
+        }
+
+        commit_count += 1;
         *author_commit_count.entry(author).or_insert(0) += 1;
 
         let time = commit.time().seconds();
@@ -646,7 +702,7 @@ fn analyze_repo(path: &str) -> Result<AnalysisResult, Error> {
 
     let mut commit_frequency: HashMap<String, usize> = HashMap::new();
     for (date, _, _) in &commit_activity {
-        let week = date[..7].to_string(); // Assuming date is in "YYYY-MM-DD" format
+        let week = date[..7].to_string();
         *commit_frequency.entry(week).or_insert(0) += 1;
     }
 
