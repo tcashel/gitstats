@@ -34,4 +34,4 @@ impl Default for ChartStyle {
             label_area_size: 50,
         }
     }
-} 
+}

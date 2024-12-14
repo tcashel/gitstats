@@ -1,3 +1,3 @@
 mod aggregation;
 
-pub use aggregation::aggregate_data; 
+pub use aggregation::aggregate_data;

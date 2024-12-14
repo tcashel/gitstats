@@ -1,9 +1,9 @@
-use std::sync::{Arc, Mutex};
-use egui::{Context, ComboBox};
+use egui::{ComboBox, Context};
 use image::ImageReader;
+use std::sync::{Arc, Mutex};
 
-use crate::analysis::analyze_repo_async;
 use super::App;
+use crate::analysis::analyze_repo_async;
 
 /// Draw the main application UI
 pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
@@ -32,22 +32,27 @@ pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
         // Contributor selection
         if !app.all_contributors.is_empty() {
             ui.label("Contributor:");
-            let mut contributors: Vec<String> = app.all_contributors
+            let mut contributors: Vec<String> = app
+                .all_contributors
                 .iter()
                 .map(|(name, _)| name.clone())
                 .collect();
             contributors.sort();
             contributors.insert(0, "All".to_string());
-            
+
             let prev_contributor = app.selected_contributor.clone();
             ComboBox::new("contributor_selector", "")
                 .selected_text(&app.selected_contributor)
                 .show_ui(ui, |ui| {
                     for contributor in &contributors {
-                        ui.selectable_value(&mut app.selected_contributor, contributor.clone(), contributor);
+                        ui.selectable_value(
+                            &mut app.selected_contributor,
+                            contributor.clone(),
+                            contributor,
+                        );
                     }
                 });
-            
+
             // Handle contributor change
             if prev_contributor != app.selected_contributor {
                 handle_selection_change(app, app_arc.clone());
@@ -116,27 +121,28 @@ pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
         ui.label(format!("Total commits: {}", app.commit_count));
         ui.label(format!("Total lines added: {}", app.total_lines_added));
         ui.label(format!("Total lines deleted: {}", app.total_lines_deleted));
-        ui.label(format!("Average commit size: {:.2}", app.average_commit_size));
+        ui.label(format!(
+            "Average commit size: {:.2}",
+            app.average_commit_size
+        ));
 
         ui.separator();
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            match app.current_metric.as_str() {
-                "Commit Frequency" => {
-                    ui.label("Commit Frequency:");
-                    if let Some(texture) = &app.plot_texture {
-                        ui.image(texture);
-                    }
+        egui::ScrollArea::vertical().show(ui, |ui| match app.current_metric.as_str() {
+            "Commit Frequency" => {
+                ui.label("Commit Frequency:");
+                if let Some(texture) = &app.plot_texture {
+                    ui.image(texture);
                 }
-                "Top Contributors" => {
-                    ui.label("Top Contributors:");
-                    for (author, count) in &app.top_contributors {
-                        ui.label(format!("{}: {}", author, count));
-                    }
+            }
+            "Top Contributors" => {
+                ui.label("Top Contributors:");
+                for (author, count) in &app.top_contributors {
+                    ui.label(format!("{}: {}", author, count));
                 }
-                _ => {
-                    if let Some(texture) = &app.plot_texture {
-                        ui.image(texture);
-                    }
+            }
+            _ => {
+                if let Some(texture) = &app.plot_texture {
+                    ui.image(texture);
                 }
             }
         });
@@ -154,7 +160,9 @@ pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
 }
 
 fn handle_selection_change(app: &mut App, app_arc: Arc<Mutex<App>>) {
-    if let Some(cached_result) = app.get_cached_result(&app.selected_branch, &app.selected_contributor) {
+    if let Some(cached_result) =
+        app.get_cached_result(&app.selected_branch, &app.selected_contributor)
+    {
         // Use cached result
         app.update_with_result(cached_result);
     } else {
@@ -181,9 +189,11 @@ fn handle_selection_change(app: &mut App, app_arc: Arc<Mutex<App>>) {
 }
 
 fn load_plot_texture(app: &mut App, ctx: &Context) {
-    if let Ok(image) = ImageReader::open(&app.plot_path)
-        .and_then(|reader| reader.decode()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))) {
+    if let Ok(image) = ImageReader::open(&app.plot_path).and_then(|reader| {
+        reader
+            .decode()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+    }) {
         let size = [image.width() as usize, image.height() as usize];
         let pixels = image.to_rgba8();
         let pixels = pixels.as_flat_samples();
@@ -196,4 +206,4 @@ fn load_plot_texture(app: &mut App, ctx: &Context) {
     } else {
         eprintln!("Failed to load plot image");
     }
-} 
+}

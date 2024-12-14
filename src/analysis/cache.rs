@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::types::{AnalysisResult, CacheKey};
+use std::collections::HashMap;
 
 /// Manages caching of analysis results
 pub struct CacheManager {
@@ -34,4 +34,4 @@ impl Default for CacheManager {
     fn default() -> Self {
         Self::new()
     }
-} 
+}

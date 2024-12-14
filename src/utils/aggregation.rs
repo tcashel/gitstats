@@ -1,5 +1,8 @@
 /// Aggregate data points to reduce visual noise and improve performance
-pub fn aggregate_data(data: &[(String, usize, usize)], target_points: usize) -> Vec<(String, usize, usize)> {
+pub fn aggregate_data(
+    data: &[(String, usize, usize)],
+    target_points: usize,
+) -> Vec<(String, usize, usize)> {
     if data.len() <= target_points {
         return data.to_vec();
     }
@@ -86,4 +89,4 @@ mod tests {
         assert_eq!(result[0], ("2023-01-01".to_string(), 60, 30)); // Sum of first 3 points
         assert_eq!(result[1], ("2023-01-04".to_string(), 90, 45)); // Sum of last 2 points
     }
-} 
+}

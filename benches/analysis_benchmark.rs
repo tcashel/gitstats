@@ -1,22 +1,22 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use gitstats::analysis::analyze_repo_async;
 use git2::{Repository, Signature};
-use tempfile::TempDir;
+use gitstats::analysis::analyze_repo_async;
 use std::fs;
 use std::path::Path;
+use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
 fn setup_large_test_repo() -> (TempDir, Repository) {
     let temp_dir = TempDir::new().unwrap();
     let repo = Repository::init(temp_dir.path()).unwrap();
-    
+
     // Create initial commit
     let signature = Signature::now("Test User", "test@example.com").unwrap();
     let tree_id = {
         let mut index = repo.index().unwrap();
         index.write_tree().unwrap()
     };
-    
+
     {
         let tree = repo.find_tree(tree_id).unwrap();
         repo.commit(
@@ -26,7 +26,8 @@ fn setup_large_test_repo() -> (TempDir, Repository) {
             "Initial commit",
             &tree,
             &[],
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     // Create multiple files and commits to simulate a large repository
@@ -35,21 +36,21 @@ fn setup_large_test_repo() -> (TempDir, Repository) {
         let content = format!("Content for file {}\n", i);
         let file_path = temp_dir.path().join(&file_name);
         fs::write(&file_path, content).unwrap();
-        
+
         let mut index = repo.index().unwrap();
         index.add_path(Path::new(&file_name)).unwrap();
         index.write().unwrap();
-        
+
         let tree_id = index.write_tree().unwrap();
         let parent = repo.head().unwrap().peel_to_commit().unwrap();
-        
+
         // Alternate between different authors
         let author = if i % 2 == 0 {
             Signature::now("Test User", "test@example.com").unwrap()
         } else {
             Signature::now("Another User", "another@example.com").unwrap()
         };
-        
+
         {
             let tree = repo.find_tree(tree_id).unwrap();
             repo.commit(
@@ -59,7 +60,8 @@ fn setup_large_test_repo() -> (TempDir, Repository) {
                 &format!("Add {}", file_name),
                 &tree,
                 &[&parent],
-            ).unwrap();
+            )
+            .unwrap();
         }
     }
 
@@ -68,21 +70,25 @@ fn setup_large_test_repo() -> (TempDir, Repository) {
         let head = repo.head().unwrap().peel_to_commit().unwrap();
         let develop = repo.branch("develop", &head, false).unwrap();
         let develop_ref = develop.get().name().unwrap().to_string();
-        
+
         // Add some commits to develop
         for i in 0..20 {
             let file_name = format!("develop_file_{}.txt", i);
             let content = format!("Develop content {}\n", i);
             let file_path = temp_dir.path().join(&file_name);
             fs::write(&file_path, content).unwrap();
-            
+
             let mut index = repo.index().unwrap();
             index.add_path(Path::new(&file_name)).unwrap();
             index.write().unwrap();
-            
+
             let tree_id = index.write_tree().unwrap();
-            let parent = repo.find_reference(&develop_ref).unwrap().peel_to_commit().unwrap();
-            
+            let parent = repo
+                .find_reference(&develop_ref)
+                .unwrap()
+                .peel_to_commit()
+                .unwrap();
+
             {
                 let tree = repo.find_tree(tree_id).unwrap();
                 repo.commit(
@@ -92,7 +98,8 @@ fn setup_large_test_repo() -> (TempDir, Repository) {
                     &format!("Add develop file {}", i),
                     &tree,
                     &[&parent],
-                ).unwrap();
+                )
+                .unwrap();
             }
         }
     }
@@ -112,7 +119,9 @@ fn bench_analysis(c: &mut Criterion) {
                     temp_dir.path().to_str().unwrap().to_string(),
                     "main".to_string(),
                     "All".to_string(),
-                ).await.unwrap()
+                )
+                .await
+                .unwrap()
             })
         });
     });
@@ -125,7 +134,9 @@ fn bench_analysis(c: &mut Criterion) {
                     temp_dir.path().to_str().unwrap().to_string(),
                     "main".to_string(),
                     "Test User".to_string(),
-                ).await.unwrap()
+                )
+                .await
+                .unwrap()
             })
         });
     });
@@ -138,7 +149,9 @@ fn bench_analysis(c: &mut Criterion) {
                     temp_dir.path().to_str().unwrap().to_string(),
                     "develop".to_string(),
                     "All".to_string(),
-                ).await.unwrap()
+                )
+                .await
+                .unwrap()
             })
         });
     });
@@ -153,11 +166,7 @@ fn bench_data_processing(c: &mut Criterion) {
     {
         let mut data = Vec::new();
         for i in 0..100 {
-            data.push((
-                format!("2023-{:02}-01", (i % 12) + 1),
-                i * 10,
-                i * 5,
-            ));
+            data.push((format!("2023-{:02}-01", (i % 12) + 1), i * 10, i * 5));
         }
 
         group.bench_function("aggregate_small_dataset", |b| {
@@ -169,11 +178,7 @@ fn bench_data_processing(c: &mut Criterion) {
     {
         let mut data = Vec::new();
         for i in 0..10000 {
-            data.push((
-                format!("2023-{:02}-01", (i % 12) + 1),
-                i * 10,
-                i * 5,
-            ));
+            data.push((format!("2023-{:02}-01", (i % 12) + 1), i * 10, i * 5));
         }
 
         group.bench_function("aggregate_large_dataset", |b| {
@@ -194,14 +199,21 @@ fn bench_plotting(c: &mut Criterion) {
             temp_dir.path().to_str().unwrap().to_string(),
             "main".to_string(),
             "All".to_string(),
-        ).await.unwrap()
+        )
+        .await
+        .unwrap()
     });
 
     // Commits plot
     {
         let mut app = gitstats::GitStatsApp::default();
         app.update_with_result(result.clone());
-        app.plot_path = temp_dir.path().join("bench_plot.png").to_str().unwrap().to_string();
+        app.plot_path = temp_dir
+            .path()
+            .join("bench_plot.png")
+            .to_str()
+            .unwrap()
+            .to_string();
         app.current_metric = "Commits".to_string();
 
         group.bench_function("plot_commits", |b| {
@@ -213,7 +225,12 @@ fn bench_plotting(c: &mut Criterion) {
     {
         let mut app = gitstats::GitStatsApp::default();
         app.update_with_result(result.clone());
-        app.plot_path = temp_dir.path().join("bench_plot.png").to_str().unwrap().to_string();
+        app.plot_path = temp_dir
+            .path()
+            .join("bench_plot.png")
+            .to_str()
+            .unwrap()
+            .to_string();
         app.current_metric = "Code Changes".to_string();
 
         group.bench_function("plot_code_changes", |b| {
@@ -225,7 +242,12 @@ fn bench_plotting(c: &mut Criterion) {
     {
         let mut app = gitstats::GitStatsApp::default();
         app.update_with_result(result);
-        app.plot_path = temp_dir.path().join("bench_plot.png").to_str().unwrap().to_string();
+        app.plot_path = temp_dir
+            .path()
+            .join("bench_plot.png")
+            .to_str()
+            .unwrap()
+            .to_string();
         app.use_log_scale = true;
 
         group.bench_function("plot_with_log_scale", |b| {
@@ -246,11 +268,9 @@ fn bench_caching(c: &mut Criterion) {
 
     // Pre-populate cache
     let result = rt.block_on(async {
-        analyze_repo_async(
-            app.repo_path.clone(),
-            "main".to_string(),
-            "All".to_string(),
-        ).await.unwrap()
+        analyze_repo_async(app.repo_path.clone(), "main".to_string(), "All".to_string())
+            .await
+            .unwrap()
     });
     app.update_with_result(result);
 
@@ -274,4 +294,4 @@ criterion_group!(
     bench_plotting,
     bench_caching
 );
-criterion_main!(benches); 
+criterion_main!(benches);

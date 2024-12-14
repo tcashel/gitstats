@@ -1,5 +1,5 @@
 //! Git Statistics Visualization Tool
-//! 
+//!
 //! A GUI application for analyzing and visualizing Git repository statistics.
 
 use eframe::egui;
@@ -20,7 +20,7 @@ fn main() {
                 .with_title("Git Statistics"),
             ..Default::default()
         };
-        
+
         if let Err(e) = eframe::run_native(
             "Git Statistics",
             options,
@@ -28,7 +28,7 @@ fn main() {
                 // Configure default fonts and style
                 let fonts = egui::FontDefinitions::default();
                 cc.egui_ctx.set_fonts(fonts);
-                
+
                 let app: Arc<Mutex<App>> = Arc::new(Mutex::new(App::default()));
                 Ok(Box::new(AppWrapper { app }) as Box<dyn eframe::App>)
             }),

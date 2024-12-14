@@ -1,12 +1,16 @@
-use git2::{Repository, Error};
+use chrono::{DateTime, Utc};
+use git2::{Error, Repository};
 use std::collections::HashMap;
 use tokio::task::spawn_blocking;
-use chrono::{DateTime, Utc};
 
 use crate::types::AnalysisResult;
 
 /// Analyze a Git repository asynchronously
-pub async fn analyze_repo_async(path: String, branch: String, contributor: String) -> Result<AnalysisResult, Error> {
+pub async fn analyze_repo_async(
+    path: String,
+    branch: String,
+    contributor: String,
+) -> Result<AnalysisResult, Error> {
     spawn_blocking(move || analyze_repo_with_filter(&path, &branch, &contributor))
         .await
         .map_err(|e| Error::from_str(&e.to_string()))?
@@ -16,7 +20,7 @@ pub async fn analyze_repo_async(path: String, branch: String, contributor: Strin
 pub fn get_available_branches(repo: &Repository) -> Result<Vec<String>, Error> {
     let mut branch_names = Vec::new();
     let branches = repo.branches(None)?;
-    
+
     for branch in branches {
         if let Ok((branch, _)) = branch {
             if let Ok(name) = branch.name() {
@@ -26,29 +30,33 @@ pub fn get_available_branches(repo: &Repository) -> Result<Vec<String>, Error> {
             }
         }
     }
-    
+
     // Sort branches alphabetically
     branch_names.sort();
-    
+
     // Ensure "main" or "master" is first if present
     if let Some(main_idx) = branch_names.iter().position(|x| x == "main") {
         branch_names.swap(0, main_idx);
     } else if let Some(master_idx) = branch_names.iter().position(|x| x == "master") {
         branch_names.swap(0, master_idx);
     }
-    
+
     Ok(branch_names)
 }
 
 /// Analyze a Git repository with branch and contributor filters
-fn analyze_repo_with_filter(path: &str, branch: &str, contributor: &str) -> Result<AnalysisResult, Error> {
+fn analyze_repo_with_filter(
+    path: &str,
+    branch: &str,
+    contributor: &str,
+) -> Result<AnalysisResult, Error> {
     let repo = Repository::open(path)?;
-    
+
     // Get available branches first
     let branches = get_available_branches(&repo)?;
-    
+
     let mut revwalk = repo.revwalk()?;
-    
+
     // Set up branch filtering
     if let Ok(branch_ref) = repo.find_branch(branch, git2::BranchType::Local) {
         if let Some(branch_ref_name) = branch_ref.get().name() {
@@ -108,7 +116,8 @@ fn analyze_repo_with_filter(path: &str, branch: &str, contributor: &str) -> Resu
         commit_activity.push((date, lines_added, lines_deleted));
     }
 
-    let mut top_contributors: Vec<(String, usize)> = author_commit_count.clone().into_iter().collect();
+    let mut top_contributors: Vec<(String, usize)> =
+        author_commit_count.clone().into_iter().collect();
     top_contributors.sort_by(|a, b| b.1.cmp(&a.1));
     top_contributors.truncate(5);
 
@@ -124,7 +133,8 @@ fn analyze_repo_with_filter(path: &str, branch: &str, contributor: &str) -> Resu
         *commit_frequency.entry(week).or_insert(0) += 1;
     }
 
-    let mut top_contributors_by_lines: Vec<(String, usize)> = author_commit_count.into_iter().collect();
+    let mut top_contributors_by_lines: Vec<(String, usize)> =
+        author_commit_count.into_iter().collect();
     top_contributors_by_lines.sort_by(|a, b| b.1.cmp(&a.1));
     top_contributors_by_lines.truncate(5);
 
@@ -139,4 +149,4 @@ fn analyze_repo_with_filter(path: &str, branch: &str, contributor: &str) -> Resu
         top_contributors_by_lines,
         available_branches: branches,
     })
-} 
+}

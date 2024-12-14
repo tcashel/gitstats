@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use eframe::App as EApp;
 use egui::TextureHandle;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use crate::types::{AnalysisResult, CacheKey};
 
@@ -37,25 +37,27 @@ impl App {
         if self.all_contributors.is_empty() || self.selected_contributor == "All" {
             self.all_contributors = result.top_contributors.clone();
         }
-        
+
         // Update available branches
         if self.available_branches.is_empty() {
             self.available_branches = result.available_branches.clone();
             // Set default branch if not already set
             if self.selected_branch.is_empty() {
-                self.selected_branch = self.available_branches.first()
+                self.selected_branch = self
+                    .available_branches
+                    .first()
                     .cloned()
                     .unwrap_or_else(|| "main".to_string());
             }
         }
-        
+
         // Cache the result using both branch and contributor
         let cache_key = CacheKey {
             branch: self.selected_branch.clone(),
             contributor: self.selected_contributor.clone(),
         };
         self.analysis_cache.insert(cache_key, result.clone());
-        
+
         self.commit_count = result.commit_count;
         self.total_lines_added = result.total_lines_added;
         self.total_lines_deleted = result.total_lines_deleted;
@@ -114,4 +116,4 @@ impl EApp for AppWrapper {
         let mut app = self.app.lock().unwrap();
         super::ui::draw_ui(&mut app, ctx, Arc::clone(&self.app));
     }
-} 
+}

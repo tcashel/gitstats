@@ -1,6 +1,6 @@
+use plotters::coord::types::RangedCoordf64;
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
-use plotters::coord::types::RangedCoordf64;
 use std::collections::HashMap;
 
 use crate::app::App;
@@ -9,8 +9,7 @@ use crate::utils::aggregate_data;
 /// Generate a plot based on the current app state
 pub fn generate_plot(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     // Create the drawing area
-    let root_area = BitMapBackend::new(&app.plot_path, (640, 480))
-        .into_drawing_area();
+    let root_area = BitMapBackend::new(&app.plot_path, (640, 480)).into_drawing_area();
     root_area.fill(&BLACK.mix(0.95))?;
 
     // Get aggregated data
@@ -19,21 +18,22 @@ pub fn generate_plot(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     // Calculate range based on data type and adaptive scaling
     let (min_val, max_val) = match app.current_metric.as_str() {
         "Commits" => {
-            let commit_values: Vec<f64> = plot_data.iter()
+            let commit_values: Vec<f64> = plot_data
+                .iter()
                 .map(|(date, _, _)| {
-                    let count = plot_data.iter()
-                        .filter(|(d, _, _)| d == date)
-                        .count() as f64;
+                    let count = plot_data.iter().filter(|(d, _, _)| d == date).count() as f64;
                     count
                 })
                 .collect();
             calculate_adaptive_range(&commit_values)
         }
         "Code Changes" | "Code Frequency" => {
-            let added_values: Vec<f64> = plot_data.iter()
+            let added_values: Vec<f64> = plot_data
+                .iter()
                 .map(|(_, added, _)| *added as f64)
                 .collect();
-            let deleted_values: Vec<f64> = plot_data.iter()
+            let deleted_values: Vec<f64> = plot_data
+                .iter()
                 .map(|(_, _, deleted)| *deleted as f64)
                 .collect();
             let (_, max_added) = calculate_adaptive_range(&added_values);
@@ -45,34 +45,40 @@ pub fn generate_plot(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Get date range for x-axis
-    let dates: Vec<String> = plot_data.iter()
-        .map(|(date, _, _)| date.clone())
-        .collect();
+    let dates: Vec<String> = plot_data.iter().map(|(date, _, _)| date.clone()).collect();
 
     // Build the chart with improved styling
     let mut chart_builder = ChartBuilder::on(&root_area)
         .caption(
             format!("{} Over Time", app.current_metric),
-            ("sans-serif", 30).into_font().color(&WHITE.mix(0.8))
+            ("sans-serif", 30).into_font().color(&WHITE.mix(0.8)),
         )
         .margin(10)
         .set_all_label_area_size(50)
         .build_cartesian_2d(
             0f64..(plot_data.len() as f64),
-            if app.use_log_scale { 1.0..max_val } else { min_val..max_val }
+            if app.use_log_scale {
+                1.0..max_val
+            } else {
+                min_val..max_val
+            },
         )?;
 
     // Configure mesh with improved styling
     let mut mesh = chart_builder.configure_mesh();
-    
+
     // Store the dates in a longer-lived variable
     let dates_clone = dates.clone();
     let x_label_formatter = move |x: &f64| {
         let idx = *x as usize;
         if idx < dates_clone.len() {
             // Show fewer labels to prevent overlap
-            if idx == 0 || idx == dates_clone.len() - 1 || 
-               (idx % (dates_clone.len() / 4).max(1) == 0 && idx > 0 && idx < dates_clone.len() - 1) {
+            if idx == 0
+                || idx == dates_clone.len() - 1
+                || (idx % (dates_clone.len() / 4).max(1) == 0
+                    && idx > 0
+                    && idx < dates_clone.len() - 1)
+            {
                 dates_clone[idx].clone()
             } else {
                 String::new()
@@ -89,11 +95,13 @@ pub fn generate_plot(app: &App) -> Result<(), Box<dyn std::error::Error>> {
         .label_style(("sans-serif", 15).into_font().color(&WHITE.mix(0.8)))
         .x_label_formatter(&x_label_formatter)
         // Rotate x labels for better readability
-        .x_label_style(("sans-serif", 15)
-            .into_font()
-            .color(&WHITE.mix(0.8))
-            .transform(FontTransform::Rotate90)
-            .pos(Pos::new(HPos::Right, VPos::Center)));
+        .x_label_style(
+            ("sans-serif", 15)
+                .into_font()
+                .color(&WHITE.mix(0.8))
+                .transform(FontTransform::Rotate90)
+                .pos(Pos::new(HPos::Right, VPos::Center)),
+        );
 
     if app.use_log_scale {
         mesh.y_label_formatter(&|y| format!("{:.1e}", y));
@@ -129,7 +137,8 @@ pub fn generate_plot(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Draw legend with improved styling
-    chart_builder.configure_series_labels()
+    chart_builder
+        .configure_series_labels()
         .background_style(&BLACK.mix(0.8))
         .border_style(&WHITE.mix(0.5))
         .position(SeriesLabelPosition::UpperRight)
@@ -141,7 +150,10 @@ pub fn generate_plot(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn draw_grid(chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedCoordf64, RangedCoordf64>>, x_max: f64) -> Result<(), Box<dyn std::error::Error>> {
+fn draw_grid(
+    chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedCoordf64, RangedCoordf64>>,
+    x_max: f64,
+) -> Result<(), Box<dyn std::error::Error>> {
     let grid_style = ShapeStyle::from(&WHITE.mix(0.15)).stroke_width(1);
     let major_grid_style = ShapeStyle::from(&WHITE.mix(0.25)).stroke_width(2);
 
@@ -152,25 +164,32 @@ fn draw_grid(chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedC
     let y_span = y_max - y_min;
 
     // Calculate nice grid intervals
-    let y_interval = if y_span > 1_000_000.0 { 100_000.0 }
-        else if y_span > 100_000.0 { 10_000.0 }
-        else if y_span > 10_000.0 { 1_000.0 }
-        else if y_span > 1_000.0 { 100.0 }
-        else if y_span > 100.0 { 10.0 }
-        else { 1.0 };
+    let y_interval = if y_span > 1_000_000.0 {
+        100_000.0
+    } else if y_span > 100_000.0 {
+        10_000.0
+    } else if y_span > 10_000.0 {
+        1_000.0
+    } else if y_span > 1_000.0 {
+        100.0
+    } else if y_span > 100.0 {
+        10.0
+    } else {
+        1.0
+    };
 
     // Draw both major and minor grid lines
     let steps = (y_span / y_interval).ceil() as i32;
     let y_start = (y_min / y_interval).floor() * y_interval;
-    
+
     for i in 0..=steps {
         let y = y_start + i as f64 * y_interval;
         if y > y_max {
             break;
         }
-        let style = if i % 5 == 0 { 
+        let style = if i % 5 == 0 {
             major_grid_style.clone()
-        } else { 
+        } else {
             grid_style.clone()
         };
         chart_builder.draw_series(std::iter::once(PathElement::new(
@@ -191,7 +210,10 @@ fn draw_grid(chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedC
     Ok(())
 }
 
-fn draw_code_changes(chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedCoordf64, RangedCoordf64>>, plot_data: &[(String, usize, usize)]) -> Result<(), Box<dyn std::error::Error>> {
+fn draw_code_changes(
+    chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedCoordf64, RangedCoordf64>>,
+    plot_data: &[(String, usize, usize)],
+) -> Result<(), Box<dyn std::error::Error>> {
     // Smooth the data using moving average
     let window_size = if plot_data.len() < 1000 { 3 } else { 2 };
     let mut smoothed_additions: Vec<(f64, f64)> = Vec::new();
@@ -205,35 +227,38 @@ fn draw_code_changes(chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d
         let avg_added = plot_data[start..end]
             .iter()
             .map(|(_, added, _)| *added as f64)
-            .sum::<f64>() / count as f64;
+            .sum::<f64>()
+            / count as f64;
 
         let avg_deleted = plot_data[start..end]
             .iter()
             .map(|(_, _, deleted)| *deleted as f64)
-            .sum::<f64>() / count as f64;
+            .sum::<f64>()
+            / count as f64;
 
         smoothed_additions.push((i as f64, avg_added));
         smoothed_deletions.push((i as f64, -avg_deleted));
     }
 
     // Draw additions line
-    chart_builder.draw_series(LineSeries::new(
-        smoothed_additions,
-        &GREEN.mix(0.8),
-    ))?.label("Additions")
+    chart_builder
+        .draw_series(LineSeries::new(smoothed_additions, &GREEN.mix(0.8)))?
+        .label("Additions")
         .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &GREEN.mix(0.8)));
 
     // Draw deletions line
-    chart_builder.draw_series(LineSeries::new(
-        smoothed_deletions,
-        &RED.mix(0.8),
-    ))?.label("Deletions")
+    chart_builder
+        .draw_series(LineSeries::new(smoothed_deletions, &RED.mix(0.8)))?
+        .label("Deletions")
         .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED.mix(0.8)));
 
     Ok(())
 }
 
-fn draw_commits(chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedCoordf64, RangedCoordf64>>, plot_data: &[(String, usize, usize)]) -> Result<(), Box<dyn std::error::Error>> {
+fn draw_commits(
+    chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedCoordf64, RangedCoordf64>>,
+    plot_data: &[(String, usize, usize)],
+) -> Result<(), Box<dyn std::error::Error>> {
     // Calculate commit counts
     let mut commit_counts = HashMap::new();
     for (date, _, _) in plot_data {
@@ -241,7 +266,8 @@ fn draw_commits(chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<Rang
     }
 
     // Create raw data points
-    let raw_data: Vec<(f64, f64)> = plot_data.iter()
+    let raw_data: Vec<(f64, f64)> = plot_data
+        .iter()
         .enumerate()
         .map(|(i, (date, _, _))| {
             let count = *commit_counts.get(date).unwrap_or(&0);
@@ -261,7 +287,8 @@ fn draw_commits(chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<Rang
         let avg = raw_data[start..end]
             .iter()
             .map(|(_, count)| *count)
-            .sum::<f64>() / count as f64;
+            .sum::<f64>()
+            / count as f64;
 
         smoothed_data.push((i as f64, avg));
     }
@@ -275,40 +302,44 @@ fn draw_commits(chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<Rang
 
     // Draw the main line with a brighter color
     let line_color = &RGBColor(135, 206, 250); // Light sky blue
-    chart_builder.draw_series(LineSeries::new(
-        smoothed_data,
-        line_color.stroke_width(2),
-    ))?.label("Commits")
+    chart_builder
+        .draw_series(LineSeries::new(smoothed_data, line_color.stroke_width(2)))?
+        .label("Commits")
         .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], line_color));
 
     Ok(())
 }
 
-fn draw_code_frequency(chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedCoordf64, RangedCoordf64>>, plot_data: &[(String, usize, usize)]) -> Result<(), Box<dyn std::error::Error>> {
+fn draw_code_frequency(
+    chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedCoordf64, RangedCoordf64>>,
+    plot_data: &[(String, usize, usize)],
+) -> Result<(), Box<dyn std::error::Error>> {
     let bar_width = 0.8;
-    
+
     // Draw additions (positive bars)
-    chart_builder.draw_series(
-        plot_data.iter().enumerate().map(|(i, (_, added, _))| {
+    chart_builder
+        .draw_series(plot_data.iter().enumerate().map(|(i, (_, added, _))| {
             let x0 = i as f64;
             let x1 = x0 + bar_width;
             let y0 = 0.0;
             let y1 = *added as f64;
             Rectangle::new([(x0, y0), (x1, y1)], GREEN.mix(0.6).filled())
-        })
-    )?.label("Additions")
-        .legend(move |(x, y)| Rectangle::new([(x, y - 5), (x + 20, y + 5)], GREEN.mix(0.6).filled()));
+        }))?
+        .label("Additions")
+        .legend(move |(x, y)| {
+            Rectangle::new([(x, y - 5), (x + 20, y + 5)], GREEN.mix(0.6).filled())
+        });
 
     // Draw deletions (negative bars)
-    chart_builder.draw_series(
-        plot_data.iter().enumerate().map(|(i, (_, _, deleted))| {
+    chart_builder
+        .draw_series(plot_data.iter().enumerate().map(|(i, (_, _, deleted))| {
             let x0 = i as f64;
             let x1 = x0 + bar_width;
             let y0 = 0.0;
             let y1 = -(*deleted as f64);
             Rectangle::new([(x0, y0), (x1, y1)], RED.mix(0.6).filled())
-        })
-    )?.label("Deletions")
+        }))?
+        .label("Deletions")
         .legend(move |(x, y)| Rectangle::new([(x, y - 5), (x + 20, y + 5)], RED.mix(0.6).filled()));
 
     Ok(())
@@ -317,22 +348,24 @@ fn draw_code_frequency(chart_builder: &mut ChartContext<BitMapBackend, Cartesian
 fn calculate_adaptive_range(values: &[f64]) -> (f64, f64) {
     let mut sorted = values.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    
+
     if sorted.is_empty() {
         return (0.0, 1.0);
     }
 
     // Remove extreme outliers (values beyond 95th percentile)
-    let p95_idx = ((sorted.len() as f64 * 0.95) as usize).max(1).min(sorted.len() - 1);
+    let p95_idx = ((sorted.len() as f64 * 0.95) as usize)
+        .max(1)
+        .min(sorted.len() - 1);
     let normal_max = sorted[p95_idx];
     let absolute_max = sorted[sorted.len() - 1];
-    
+
     // Use the 95th percentile for the main scale, but ensure we can still see the peaks
     let display_max = if absolute_max > normal_max * 2.0 {
         normal_max * 1.2 // Main scale shows normal range
     } else {
         absolute_max * 1.1 // Show everything if no extreme outliers
     };
-    
+
     (0.0, display_max)
-} 
+}
