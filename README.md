@@ -3,6 +3,16 @@
 A modern, fast Git repository analyzer and visualization tool built in Rust.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Documentation](https://img.shields.io/badge/docs-online-blue.svg)](https://tcashel.github.io/gitstats/)
+
+| Status | Description |
+|--------|-------------|
+| [![Ubuntu](https://github.com/tcashel/gitstats/actions/workflows/ci.yml/badge.svg?branch=main&event=push&job=ubuntu)](https://github.com/tcashel/gitstats/actions/workflows/ci.yml) | Unit Tests (Ubuntu) |
+| [![macOS](https://github.com/tcashel/gitstats/actions/workflows/ci.yml/badge.svg?branch=main&event=push&job=macos)](https://github.com/tcashel/gitstats/actions/workflows/ci.yml) | Unit Tests (macOS) |
+| [![Fedora](https://github.com/tcashel/gitstats/actions/workflows/ci.yml/badge.svg?branch=main&event=push&job=fedora)](https://github.com/tcashel/gitstats/actions/workflows/ci.yml) | Unit Tests (Fedora) |
+| [![Lint](https://github.com/tcashel/gitstats/actions/workflows/ci.yml/badge.svg?branch=main&event=push&job=lint)](https://github.com/tcashel/gitstats/actions/workflows/ci.yml) | Clippy & Rustfmt Checks |
+| [![Benchmarks](https://github.com/tcashel/gitstats/actions/workflows/ci.yml/badge.svg?branch=main&event=push&job=bench)](https://github.com/tcashel/gitstats/actions/workflows/ci.yml) | Performance Benchmarks |
+| [![Docs](https://github.com/tcashel/gitstats/actions/workflows/ci.yml/badge.svg?branch=main&event=push&job=docs)](https://github.com/tcashel/gitstats/actions/workflows/ci.yml) | Documentation Build |
 
 GitStats provides interactive visualizations and insights into your Git repositories, helping you understand commit patterns, code changes, and contributor dynamics.
 
@@ -188,6 +198,8 @@ Criterion.rs automatically saves benchmark results and generates comparison repo
 ```bash
 cargo doc --no-deps --open
 ```
+
+The latest API documentation is available online at [https://tcashel.github.io/gitstats/](https://tcashel.github.io/gitstats/).
 
 ## Contributing
 

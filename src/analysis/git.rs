@@ -21,13 +21,9 @@ pub fn get_available_branches(repo: &Repository) -> Result<Vec<String>, Error> {
     let mut branch_names = Vec::new();
     let branches = repo.branches(None)?;
 
-    for branch in branches {
-        if let Ok((branch, _)) = branch {
-            if let Ok(name) = branch.name() {
-                if let Some(name) = name {
-                    branch_names.push(name.to_string());
-                }
-            }
+    for (branch, _) in branches.flatten() {
+        if let Ok(Some(name)) = branch.name() {
+            branch_names.push(name.to_string());
         }
     }
 

@@ -88,9 +88,9 @@ pub fn generate_plot(app: &App) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    mesh.light_line_style(&TRANSPARENT)
-        .bold_line_style(&WHITE.mix(0.2))
-        .axis_style(&WHITE.mix(0.8))
+    mesh.light_line_style(TRANSPARENT)
+        .bold_line_style(WHITE.mix(0.2))
+        .axis_style(WHITE.mix(0.8))
         .y_desc(&app.current_metric)
         .label_style(("sans-serif", 15).into_font().color(&WHITE.mix(0.8)))
         .x_label_formatter(&x_label_formatter)
@@ -139,8 +139,8 @@ pub fn generate_plot(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     // Draw legend with improved styling
     chart_builder
         .configure_series_labels()
-        .background_style(&BLACK.mix(0.8))
-        .border_style(&WHITE.mix(0.5))
+        .background_style(BLACK.mix(0.8))
+        .border_style(WHITE.mix(0.5))
         .position(SeriesLabelPosition::UpperRight)
         .legend_area_size(30)
         .label_font(("sans-serif", 15).into_font().color(&WHITE.mix(0.8)))
@@ -188,9 +188,9 @@ fn draw_grid(
             break;
         }
         let style = if i % 5 == 0 {
-            major_grid_style.clone()
+            major_grid_style
         } else {
-            grid_style.clone()
+            grid_style
         };
         chart_builder.draw_series(std::iter::once(PathElement::new(
             vec![(0.0, y), (x_max, y)],
@@ -244,13 +244,13 @@ fn draw_code_changes(
     chart_builder
         .draw_series(LineSeries::new(smoothed_additions, &GREEN.mix(0.8)))?
         .label("Additions")
-        .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &GREEN.mix(0.8)));
+        .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], GREEN.mix(0.8)));
 
     // Draw deletions line
     chart_builder
         .draw_series(LineSeries::new(smoothed_deletions, &RED.mix(0.8)))?
         .label("Deletions")
-        .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], &RED.mix(0.8)));
+        .legend(move |(x, y)| PathElement::new(vec![(x, y), (x + 20, y)], RED.mix(0.8)));
 
     Ok(())
 }
