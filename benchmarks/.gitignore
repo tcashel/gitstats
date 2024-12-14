@@ -1,0 +1,6 @@
+# Ignore temporary criterion files
+.criterion/
+
+# But keep the baselines
+!baseline/
+!baselines/ 
