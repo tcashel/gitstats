@@ -188,6 +188,8 @@ jobs:
   docs:
     name: Documentation
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v3
       
@@ -195,7 +197,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         
       - name: Build documentation
-        run: cargo doc --no-deps
+        run: |
+          cargo doc --no-deps --all-features
+          # Create an index.html that redirects to the main crate documentation
+          echo '<meta http-equiv="refresh" content="0; url=gitstats/index.html">' > target/doc/index.html
+          cp -r assets target/doc/ || true  # Copy assets if they exist
         
       - name: Deploy to GitHub Pages
         if: github.ref == 'refs/heads/main'
@@ -203,3 +209,6 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./target/doc
+          force_orphan: true  # Keep gh-pages branch clean
+          commit_message: 'docs: update documentation'
+          enable_jekyll: false
