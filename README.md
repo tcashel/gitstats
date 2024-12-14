@@ -6,7 +6,7 @@ A modern, fast Git repository analyzer and visualization tool built in Rust.
 
 GitStats provides interactive visualizations and insights into your Git repositories, helping you understand commit patterns, code changes, and contributor dynamics.
 
-![GitStats Screenshot](docs/assets/screenshot.png)
+![GitStats Screenshot](docs/assets/gitstats_code_changes.jpg)
 
 ## Features
 
