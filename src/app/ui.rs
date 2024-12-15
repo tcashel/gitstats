@@ -1,9 +1,18 @@
 use egui::{ComboBox, Context};
 use image::ImageReader;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use lazy_static::lazy_static;
 
 use super::App;
 use crate::analysis::analyze_repo_async;
+use crate::plotting::chart::generate_plot_async;
+
+// Progress tracking for long operations
+lazy_static! {
+    static ref ANALYSIS_PROGRESS: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
+    static ref PLOTTING_IN_PROGRESS: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+}
 
 /// Draw the main application UI
 pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
@@ -100,20 +109,25 @@ pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
             tokio::spawn(async move {
                 match analyze_repo_async(repo_path, selected_branch, selected_contributor).await {
                     Ok(result) => {
-                        let mut app = app_clone.lock().unwrap();
-                        app.update_with_result(result);
+                        if let Ok(mut app) = app_clone.lock() {
+                            app.update_with_result(result);
+                        }
                     }
                     Err(e) => {
                         eprintln!("Error: {}", e);
                     }
                 }
-                let mut app = app_clone.lock().unwrap();
-                app.is_analyzing = false;
+                if let Ok(mut app) = app_clone.lock() {
+                    app.is_analyzing = false;
+                }
             });
         }
 
+        // Show progress indicators
         if app.is_analyzing {
+            let progress = ANALYSIS_PROGRESS.load(Ordering::Relaxed);
             ui.label("Analyzing... Please wait.");
+            ui.add(egui::ProgressBar::new(progress as f32 / 100.0));
             ui.spinner();
         }
 
@@ -150,12 +164,105 @@ pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
 
     // Update plot if needed
     if app.update_needed {
-        if let Err(e) = crate::plotting::generate_plot(app) {
-            eprintln!("Plotting error: {}", e);
-        } else {
-            load_plot_texture(app, ctx);
+        let plot_path = app.plot_path.clone();
+        let app_clone = app.clone();
+        let app_arc = app_arc.clone();
+        let ctx = ctx.clone();
+
+        // Only start plotting if not already in progress
+        if !PLOTTING_IN_PROGRESS.load(Ordering::Relaxed) {
+            PLOTTING_IN_PROGRESS.store(true, Ordering::Relaxed);
+            
+            tokio::spawn(async move {
+                // Use a semaphore to limit concurrent plotting operations
+                static PLOT_SEMAPHORE: tokio::sync::OnceCell<tokio::sync::Semaphore> = tokio::sync::OnceCell::const_new();
+                let semaphore = PLOT_SEMAPHORE.get_or_init(|| async {
+                    tokio::sync::Semaphore::new(1) // Only allow one plotting operation at a time
+                }).await;
+                
+                let _permit = match semaphore.acquire().await {
+                    Ok(permit) => permit,
+                    Err(e) => {
+                        eprintln!("Failed to acquire plotting semaphore: {}", e);
+                        PLOTTING_IN_PROGRESS.store(false, Ordering::Relaxed);
+                        return;
+                    }
+                };
+
+                // Generate the plot asynchronously
+                let plot_result = generate_plot_async(app_clone).await;
+                match plot_result {
+                    Ok(plot_data) => {
+                        // Save the plot to disk
+                        if let Err(e) = tokio::fs::write(&plot_path, &plot_data).await {
+                            eprintln!("Failed to save plot: {}", e);
+                            PLOTTING_IN_PROGRESS.store(false, Ordering::Relaxed);
+                            return;
+                        }
+
+                        if let Some(image) = load_plot_texture_async(plot_path).await {
+                            let texture = ctx.load_texture(
+                                "plot_texture",
+                                image,
+                                egui::TextureOptions::LINEAR,
+                            );
+                            if let Ok(mut app) = app_arc.lock() {
+                                app.plot_texture = Some(texture);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Plotting error: {}", e);
+                    }
+                }
+
+                PLOTTING_IN_PROGRESS.store(false, Ordering::Relaxed);
+            });
         }
+        
         app.update_needed = false;
+    }
+}
+
+/// Handle selection changes asynchronously
+async fn handle_selection_change_async(
+    repo_path: String,
+    selected_branch: String,
+    selected_contributor: String,
+    app_arc: Arc<Mutex<App>>,
+    mut cancel_token: tokio::sync::watch::Receiver<bool>,
+) {
+    ANALYSIS_PROGRESS.store(0, Ordering::Relaxed);
+
+    let app_arc_clone = app_arc.clone();
+    let analysis_future = async move {
+        match analyze_repo_async(repo_path, selected_branch, selected_contributor).await {
+            Ok(result) => {
+                if let Ok(mut app) = app_arc_clone.lock() {
+                    app.update_with_result(result);
+                }
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+            }
+        }
+        ANALYSIS_PROGRESS.store(100, Ordering::Relaxed);
+        if let Ok(mut app) = app_arc_clone.lock() {
+            app.is_analyzing = false;
+        }
+    };
+
+    tokio::select! {
+        _ = cancel_token.changed() => {
+            // Update app state on cancellation
+            if let Ok(mut app) = app_arc.lock() {
+                app.is_analyzing = false;
+            }
+            ANALYSIS_PROGRESS.store(0, Ordering::Relaxed);
+        }
+        _ = analysis_future => {
+            // Analysis completed normally
+        }
     }
 }
 
@@ -172,38 +279,37 @@ fn handle_selection_change(app: &mut App, app_arc: Arc<Mutex<App>>) {
         let selected_contributor = app.selected_contributor.clone();
         app.is_analyzing = true;
 
-        tokio::spawn(async move {
-            match analyze_repo_async(repo_path, selected_branch, selected_contributor).await {
-                Ok(result) => {
-                    let mut app = app_arc.lock().unwrap();
-                    app.update_with_result(result);
-                }
-                Err(e) => {
-                    eprintln!("Error: {}", e);
-                }
-            }
-            let mut app = app_arc.lock().unwrap();
-            app.is_analyzing = false;
-        });
+        // Create cancellation token
+        let (sender, receiver) = tokio::sync::watch::channel(false);
+        app.cancel_sender = Some(sender);
+        
+        tokio::spawn(handle_selection_change_async(
+            repo_path,
+            selected_branch,
+            selected_contributor,
+            app_arc,
+            receiver,
+        ));
     }
 }
 
-fn load_plot_texture(app: &mut App, ctx: &Context) {
-    if let Ok(image) = ImageReader::open(&app.plot_path).and_then(|reader| {
-        reader
-            .decode()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
-    }) {
-        let size = [image.width() as usize, image.height() as usize];
-        let pixels = image.to_rgba8();
-        let pixels = pixels.as_flat_samples();
-        let texture = ctx.load_texture(
-            "plot_texture",
-            egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_slice()),
-            egui::TextureOptions::LINEAR,
-        );
-        app.plot_texture = Some(texture);
-    } else {
-        eprintln!("Failed to load plot image");
-    }
+async fn load_plot_texture_async(path: String) -> Option<egui::ColorImage> {
+    tokio::task::spawn_blocking(move || {
+        ImageReader::open(&path)
+            .and_then(|reader| {
+                reader
+                    .decode()
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            })
+            .ok()
+            .map(|image| {
+                let size = [image.width() as usize, image.height() as usize];
+                let pixels = image.to_rgba8();
+                let pixels = pixels.as_flat_samples();
+                egui::ColorImage::from_rgba_unmultiplied(size, pixels.as_slice())
+            })
+    })
+    .await
+    .ok()
+    .flatten()
 }

@@ -2,6 +2,8 @@ use eframe::App as EApp;
 use egui::TextureHandle;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tokio::sync::watch;
+use tokio::time::{timeout, Duration};
 
 use crate::types::{AnalysisResult, CacheKey};
 
@@ -28,6 +30,7 @@ pub struct App {
     pub selected_contributor: String,
     pub available_branches: Vec<String>,
     pub analysis_cache: HashMap<CacheKey, AnalysisResult>,
+    pub cancel_sender: Option<watch::Sender<bool>>,
 }
 
 impl App {
@@ -102,6 +105,7 @@ impl Default for App {
             selected_contributor: "All".to_string(),
             available_branches: Vec::new(),
             analysis_cache: HashMap::new(),
+            cancel_sender: None,
         }
     }
 }
@@ -113,7 +117,10 @@ pub struct AppWrapper {
 
 impl EApp for AppWrapper {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let mut app = self.app.lock().unwrap();
-        super::ui::draw_ui(&mut app, ctx, Arc::clone(&self.app));
+        if let Ok(mut app) = self.app.lock() {
+            super::ui::draw_ui(&mut app, ctx, Arc::clone(&self.app));
+        } else {
+            eprintln!("Failed to acquire app lock in update");
+        }
     }
 }

@@ -74,44 +74,47 @@ async fn test_full_workflow() {
     // Initialize app
     let app = Arc::new(Mutex::new(App::default()));
     {
-        let mut app = app.lock().unwrap();
-        app.repo_path = temp_dir.path().to_str().unwrap().to_string();
+        if let Ok(mut app) = app.lock() {
+            app.repo_path = temp_dir.path().to_str().unwrap().to_string();
+        }
     }
 
     // Test repository analysis
     {
-        let mut app = app.lock().unwrap();
-        assert_eq!(app.commit_count, 0);
-        assert!(app.top_contributors.is_empty());
+        if let Ok(mut app) = app.lock() {
+            assert_eq!(app.commit_count, 0);
+            assert!(app.top_contributors.is_empty());
 
-        // Analyze repository
-        let result = gitstats::analysis::analyze_repo_async(
-            app.repo_path.clone(),
-            "main".to_string(),
-            "All".to_string(),
-        )
-        .await
-        .unwrap();
+            // Analyze repository
+            let result = gitstats::analysis::analyze_repo_async(
+                app.repo_path.clone(),
+                "main".to_string(),
+                "All".to_string(),
+            )
+            .await
+            .unwrap();
 
-        app.update_with_result(result);
+            app.update_with_result(result);
 
-        // Verify analysis results
-        assert!(app.commit_count > 0);
-        assert!(!app.top_contributors.is_empty());
-        assert!(app.total_lines_added > 0);
-        assert_eq!(app.selected_contributor, "All");
+            // Verify analysis results
+            assert!(app.commit_count > 0);
+            assert!(!app.top_contributors.is_empty());
+            assert!(app.total_lines_added > 0);
+            assert_eq!(app.selected_contributor, "All");
+        }
     }
 
     // Test branch selection
     {
-        let mut app = app.lock().unwrap();
-        assert!(!app.available_branches.is_empty());
-        let original_branch = app.selected_branch.clone();
+        if let Ok(mut app) = app.lock() {
+            assert!(!app.available_branches.is_empty());
+            let original_branch = app.selected_branch.clone();
 
-        // Switch branch
-        if let Some(branch) = app.available_branches.get(0) {
-            app.selected_branch = branch.clone();
-            assert_ne!(app.selected_branch, original_branch);
+            // Switch branch
+            if let Some(branch) = app.available_branches.get(0) {
+                app.selected_branch = branch.clone();
+                assert_ne!(app.selected_branch, original_branch);
+            }
         }
     }
 
@@ -156,15 +159,16 @@ async fn test_full_workflow() {
 
     // Test caching
     {
-        let app = app.lock().unwrap(); // Removed mut as it's not needed
-        let cache_key = gitstats::types::CacheKey {
-            branch: app.selected_branch.clone(),
-            contributor: app.selected_contributor.clone(),
-        };
+        if let Ok(app) = app.lock() {
+            let cache_key = gitstats::types::CacheKey {
+                branch: app.selected_branch.clone(),
+                contributor: app.selected_contributor.clone(),
+            };
 
-        assert!(app
-            .get_cached_result(&cache_key.branch, &cache_key.contributor)
-            .is_some());
+            assert!(app
+                .get_cached_result(&cache_key.branch, &cache_key.contributor)
+                .is_some());
+        }
     }
 }
 

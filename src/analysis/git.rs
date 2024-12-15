@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use git2::{Error, Repository};
+use git2::{Error, Repository, Oid};
 use std::collections::HashMap;
 use tokio::task::spawn_blocking;
 
@@ -11,71 +11,66 @@ pub async fn analyze_repo_async(
     branch: String,
     contributor: String,
 ) -> Result<AnalysisResult, Error> {
-    spawn_blocking(move || analyze_repo_with_filter(&path, &branch, &contributor))
+    // Open repository in a blocking task since git2 operations are blocking
+    let repo = spawn_blocking(move || Repository::open(&path))
         .await
         .map_err(|e| Error::from_str(&e.to_string()))?
+        .map_err(|e| Error::from_str(&e.to_string()))?;
+
+    analyze_repo_with_filter(repo, &branch, &contributor).await
 }
 
 /// Get list of available branches in the repository
-pub fn get_available_branches(repo: &Repository) -> Result<Vec<String>, Error> {
-    let mut branch_names = Vec::new();
-    let branches = repo.branches(None)?;
+pub async fn get_available_branches(repo: &Repository) -> Result<Vec<String>, Error> {
+    let repo_path = repo.path().to_path_buf();
+    
+    // Move git operations to a blocking task with a new repo instance
+    spawn_blocking(move || {
+        let repo = Repository::open(repo_path)?;
+        let mut branch_names = Vec::new();
+        let branches = repo.branches(None)?;
 
-    for (branch, _) in branches.flatten() {
-        if let Ok(Some(name)) = branch.name() {
-            branch_names.push(name.to_string());
+        for (branch, _) in branches.flatten() {
+            if let Ok(Some(name)) = branch.name() {
+                branch_names.push(name.to_string());
+            }
         }
-    }
 
-    // Sort branches alphabetically
-    branch_names.sort();
+        branch_names.sort();
+        if let Some(main_idx) = branch_names.iter().position(|x| x == "main") {
+            branch_names.swap(0, main_idx);
+        } else if let Some(master_idx) = branch_names.iter().position(|x| x == "master") {
+            branch_names.swap(0, master_idx);
+        }
 
-    // Ensure "main" or "master" is first if present
-    if let Some(main_idx) = branch_names.iter().position(|x| x == "main") {
-        branch_names.swap(0, main_idx);
-    } else if let Some(master_idx) = branch_names.iter().position(|x| x == "master") {
-        branch_names.swap(0, master_idx);
-    }
-
-    Ok(branch_names)
+        Ok(branch_names)
+    })
+    .await
+    .map_err(|e| Error::from_str(&e.to_string()))?
 }
 
-/// Analyze a Git repository with branch and contributor filters
-fn analyze_repo_with_filter(
-    path: &str,
-    branch: &str,
+/// Process a chunk of commits
+fn process_commit_chunk(
+    repo: &Repository,
+    chunk: &[Oid],
     contributor: &str,
-) -> Result<AnalysisResult, Error> {
-    let repo = Repository::open(path)?;
-
-    // Get available branches first
-    let branches = get_available_branches(&repo)?;
-
-    let mut revwalk = repo.revwalk()?;
-
-    // Set up branch filtering
-    if let Ok(branch_ref) = repo.find_branch(branch, git2::BranchType::Local) {
-        if let Some(branch_ref_name) = branch_ref.get().name() {
-            revwalk.push_ref(branch_ref_name)?;
-        } else {
-            revwalk.push_head()?;
-        }
-    } else {
-        revwalk.push_head()?;
-    }
-
+) -> Result<(usize, usize, usize, Vec<(String, usize, usize)>, HashMap<String, usize>), Error> {
     let mut commit_count = 0;
     let mut total_lines_added = 0;
     let mut total_lines_deleted = 0;
     let mut author_commit_count: HashMap<String, usize> = HashMap::new();
-    let mut commit_activity: Vec<(String, usize, usize)> = Vec::new();
+    let mut commit_activity: Vec<(String, usize, usize)> = Vec::with_capacity(chunk.len());
 
-    for oid in revwalk {
-        let oid = oid?;
+    // Pre-allocate a diff options object to reuse
+    let mut diff_opts = git2::DiffOptions::new();
+    diff_opts.include_untracked(false)
+             .ignore_whitespace(true)
+             .context_lines(0);
+
+    for &oid in chunk {
         let commit = repo.find_commit(oid)?;
         let author = commit.author().name().unwrap_or("Unknown").to_string();
 
-        // Skip if not the selected contributor
         if contributor != "All" && author != contributor {
             continue;
         }
@@ -83,37 +78,179 @@ fn analyze_repo_with_filter(
         commit_count += 1;
         *author_commit_count.entry(author).or_insert(0) += 1;
 
+        // Use safe timestamp conversion
         let time = commit.time().seconds();
         let date = DateTime::<Utc>::from_timestamp(time, 0)
-            .unwrap_or_default()
-            .naive_utc()
-            .date()
-            .to_string();
+            .map(|dt| dt.naive_utc().date().to_string())
+            .unwrap_or_else(|| "Unknown".to_string());
 
-        let tree = commit.tree()?;
-        let parent_tree = if commit.parent_count() > 0 {
-            Some(commit.parent(0)?.tree()?)
-        } else {
-            None
-        };
-
-        let mut lines_added = 0;
-        let mut lines_deleted = 0;
-
-        if let Some(parent_tree) = parent_tree {
-            let diff = repo.diff_tree_to_tree(Some(&parent_tree), Some(&tree), None)?;
-            let stats = diff.stats()?;
-            lines_added = stats.insertions();
-            lines_deleted = stats.deletions();
-            total_lines_added += lines_added;
-            total_lines_deleted += lines_deleted;
+        // Optimize tree diffing
+        if let (Ok(tree), Some(Ok(parent_tree))) = (
+            commit.tree(),
+            commit.parent_count().checked_sub(1).and_then(|_| {
+                commit.parent(0).ok().map(|parent| parent.tree())
+            }),
+        ) {
+            if let Ok(diff) = repo.diff_tree_to_tree(Some(&parent_tree), Some(&tree), Some(&mut diff_opts)) {
+                if let Ok(stats) = diff.stats() {
+                    let lines_added = stats.insertions();
+                    let lines_deleted = stats.deletions();
+                    total_lines_added += lines_added;
+                    total_lines_deleted += lines_deleted;
+                    commit_activity.push((date, lines_added, lines_deleted));
+                }
+            }
         }
-
-        commit_activity.push((date, lines_added, lines_deleted));
     }
 
-    let mut top_contributors: Vec<(String, usize)> =
-        author_commit_count.clone().into_iter().collect();
+    // Optimize memory usage by shrinking vectors if they're much larger than needed
+    if commit_activity.capacity() > commit_activity.len() * 2 {
+        commit_activity.shrink_to_fit();
+    }
+
+    Ok((
+        commit_count,
+        total_lines_added,
+        total_lines_deleted,
+        commit_activity,
+        author_commit_count,
+    ))
+}
+
+/// Get optimal chunk size based on commit count
+fn get_optimal_chunk_size(_total_commits: usize) -> usize {
+    // Aim for chunks that will take ~100ms to process
+    const TARGET_CHUNK_TIME_MS: usize = 100;
+    const COMMITS_PER_MS: usize = 5; // Estimated commits processable per millisecond
+    const MIN_CHUNK_SIZE: usize = 100;
+    const MAX_CHUNK_SIZE: usize = 2000;
+
+    let optimal_size = TARGET_CHUNK_TIME_MS * COMMITS_PER_MS;
+    optimal_size.clamp(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE)
+}
+
+/// Get optimal number of parallel tasks based on system resources
+fn get_optimal_task_count() -> usize {
+    let cpu_count = num_cpus::get();
+    // Use 75% of available CPUs to leave room for other system processes
+    (cpu_count * 3 / 4).max(1)
+}
+
+/// Process commits in parallel chunks
+async fn process_commits_parallel(
+    repo_path: std::path::PathBuf,
+    commits: Vec<Oid>,
+    contributor: String,
+    _chunk_size: usize,
+) -> Result<(usize, usize, usize, Vec<(String, usize, usize)>, HashMap<String, usize>), Error> {
+    let optimal_chunk_size = get_optimal_chunk_size(commits.len());
+    let chunks: Vec<_> = commits.chunks(optimal_chunk_size).collect();
+    let mut results = Vec::with_capacity(chunks.len());
+
+    // Process chunks in parallel using a bounded number of tasks
+    let max_tasks = get_optimal_task_count();
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(max_tasks));
+
+    for chunk in chunks {
+        let chunk = chunk.to_vec();
+        let repo_path = repo_path.clone();
+        let contributor = contributor.clone();
+        let permit = match semaphore.clone().acquire_owned().await {
+            Ok(permit) => permit,
+            Err(e) => return Err(Error::from_str(&format!("Failed to acquire semaphore: {}", e))),
+        };
+
+        let handle = tokio::spawn(async move {
+            let _permit = permit; // Keep permit alive for the duration of the task
+            let result = spawn_blocking(move || {
+                let repo = Repository::open(repo_path)?;
+                process_commit_chunk(&repo, &chunk, &contributor)
+            })
+            .await
+            .map_err(|e| Error::from_str(&e.to_string()))?;
+
+            result
+        });
+        results.push(handle);
+    }
+
+    // Wait for all tasks and collect results
+    let mut total_commit_count = 0;
+    let mut total_lines_added = 0;
+    let mut total_lines_deleted = 0;
+    let mut total_commit_activity = Vec::with_capacity(commits.len());
+    let mut total_author_count = HashMap::new();
+
+    for handle in results {
+        match handle.await {
+            Ok(Ok((commits, lines_added, lines_deleted, activity, authors))) => {
+                total_commit_count += commits;
+                total_lines_added += lines_added;
+                total_lines_deleted += lines_deleted;
+                total_commit_activity.extend(activity);
+                for (author, count) in authors {
+                    *total_author_count.entry(author).or_insert(0) += count;
+                }
+            }
+            Ok(Err(e)) => {
+                eprintln!("Error processing commit chunk: {}", e);
+                // Could implement retry logic here if needed
+            }
+            Err(e) => {
+                eprintln!("Task join error: {}", e);
+                // Could implement retry logic here if needed
+            }
+        }
+    }
+
+    Ok((
+        total_commit_count,
+        total_lines_added,
+        total_lines_deleted,
+        total_commit_activity,
+        total_author_count,
+    ))
+}
+
+/// Analyze a Git repository with branch and contributor filters
+async fn analyze_repo_with_filter(
+    repo: Repository,
+    branch: &str,
+    contributor: &str,
+) -> Result<AnalysisResult, Error> {
+    let repo_path = repo.path().to_path_buf();
+    let branch = branch.to_string();
+    let contributor = contributor.to_string();
+
+    // Get commits in a blocking task
+    let commits = {
+        let repo_path = repo_path.clone(); // Clone here for the closure
+        spawn_blocking(move || {
+            let repo = Repository::open(&repo_path)?;
+            let mut revwalk = repo.revwalk()?;
+            
+            if let Ok(branch_ref) = repo.find_branch(&branch, git2::BranchType::Local) {
+                if let Some(branch_ref_name) = branch_ref.get().name() {
+                    revwalk.push_ref(branch_ref_name)?;
+                } else {
+                    revwalk.push_head()?;
+                }
+            } else {
+                revwalk.push_head()?;
+            }
+
+            revwalk.collect::<Result<Vec<_>, _>>()
+        })
+        .await
+        .map_err(|e| Error::from_str(&e.to_string()))?
+        .map_err(|e| Error::from_str(&e.to_string()))?
+    };
+
+    // Process commits in parallel chunks
+    let (commit_count, total_lines_added, total_lines_deleted, commit_activity, author_commit_count) =
+        process_commits_parallel(repo_path.clone(), commits, contributor.clone(), 1000).await?;
+
+    let mut top_contributors: Vec<(String, usize)> = author_commit_count.clone().into_iter().collect();
     top_contributors.sort_by(|a, b| b.1.cmp(&a.1));
     top_contributors.truncate(5);
 
@@ -129,10 +266,34 @@ fn analyze_repo_with_filter(
         *commit_frequency.entry(week).or_insert(0) += 1;
     }
 
-    let mut top_contributors_by_lines: Vec<(String, usize)> =
-        author_commit_count.into_iter().collect();
+    let mut top_contributors_by_lines = top_contributors.clone();
     top_contributors_by_lines.sort_by(|a, b| b.1.cmp(&a.1));
     top_contributors_by_lines.truncate(5);
+
+    // Get branches in a separate blocking task
+    let branch_names = {
+        let repo_path = repo_path.clone(); // Clone here for the closure
+        spawn_blocking(move || {
+            let repo = Repository::open(repo_path)?;
+            let mut branch_names = Vec::new();
+            let branches = repo.branches(None)?;
+            for (branch, _) in branches.flatten() {
+                if let Ok(Some(name)) = branch.name() {
+                    branch_names.push(name.to_string());
+                }
+            }
+            branch_names.sort();
+            if let Some(main_idx) = branch_names.iter().position(|x| x == "main") {
+                branch_names.swap(0, main_idx);
+            } else if let Some(master_idx) = branch_names.iter().position(|x| x == "master") {
+                branch_names.swap(0, master_idx);
+            }
+            Ok::<_, Error>(branch_names)
+        })
+        .await
+        .map_err(|e| Error::from_str(&e.to_string()))?
+        .map_err(|e| Error::from_str(&e.to_string()))?
+    };
 
     Ok(AnalysisResult {
         commit_count,
@@ -143,6 +304,6 @@ fn analyze_repo_with_filter(
         average_commit_size,
         commit_frequency,
         top_contributors_by_lines,
-        available_branches: branches,
+        available_branches: branch_names,
     })
 }

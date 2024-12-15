@@ -1,16 +1,96 @@
 use plotters::coord::types::RangedCoordf64;
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
+use plotters::coord::Shift;
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::num::NonZeroUsize;
+use lru::LruCache;
+use tokio::sync::Mutex as TokioMutex;
+use std::time::{Duration, Instant};
+use once_cell::sync::Lazy;
+use std::error::Error;
 
 use crate::app::App;
 use crate::utils::aggregate_data;
 
+type PlotError = Box<dyn Error + Send + Sync>;
+
+// Global plot cache with a 5-minute expiration
+static PLOT_CACHE: Lazy<Arc<TokioMutex<LruCache<PlotCacheKey, (Vec<u8>, Instant)>>>> = Lazy::new(|| {
+    Arc::new(TokioMutex::new(LruCache::new(NonZeroUsize::new(10).unwrap()))) // Cache up to 10 plots
+});
+
+#[derive(Hash, Eq, PartialEq)]
+struct PlotCacheKey {
+    metric: String,
+    use_log_scale: bool,
+    data_hash: u64,
+}
+
+impl PlotCacheKey {
+    fn new(app: &App) -> Self {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        app.commit_activity.hash(&mut hasher);
+        app.top_contributors.hash(&mut hasher);
+        
+        Self {
+            metric: app.current_metric.clone(),
+            use_log_scale: app.use_log_scale,
+            data_hash: hasher.finish(),
+        }
+    }
+}
+
+// Helper function to wrap errors
+fn wrap_err<E>(e: E) -> PlotError 
+where 
+    E: Into<Box<dyn Error + Send + Sync>>
+{
+    e.into()
+}
+
 /// Generate a plot based on the current app state
-pub fn generate_plot(app: &App) -> Result<(), Box<dyn std::error::Error>> {
-    // Create the drawing area
-    let root_area = BitMapBackend::new(&app.plot_path, (640, 480)).into_drawing_area();
-    root_area.fill(&BLACK.mix(0.95))?;
+pub async fn generate_plot_async(app: App) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
+    let cache_key = PlotCacheKey::new(&app);
+    
+    // Try to get from cache first
+    if let Some((plot_data, timestamp)) = PLOT_CACHE.lock().await.get(&cache_key) {
+        if timestamp.elapsed() < Duration::from_secs(300) { // 5 minutes
+            return Ok(plot_data.clone());
+        }
+    }
+
+    // Generate new plot in blocking task
+    let plot_data = tokio::task::spawn_blocking(move || {
+        let mut buffer = Vec::new();
+        {
+            let root = BitMapBackend::new(&app.plot_path, (640, 480)).into_drawing_area();
+            generate_plot_internal(&app, &root)?;
+            root.present()?;
+
+            // Read the file back into buffer
+            buffer = std::fs::read(&app.plot_path)?;
+            // Clean up the temporary file
+            let _ = std::fs::remove_file(&app.plot_path);
+        }
+        Ok::<_, PlotError>(buffer)
+    })
+    .await??;
+
+    // Cache the result
+    PLOT_CACHE.lock().await.put(cache_key, (plot_data.clone(), Instant::now()));
+
+    Ok(plot_data)
+}
+
+/// Internal function to generate the plot
+pub fn generate_plot_internal(
+    app: &App, 
+    root_area: &DrawingArea<BitMapBackend, Shift>
+) -> Result<(), PlotError> {
+    root_area.fill(&BLACK.mix(0.95)).map_err(wrap_err)?;
 
     // Get aggregated data
     let plot_data = aggregate_data(&app.commit_activity, 500);
@@ -120,40 +200,29 @@ pub fn generate_plot(app: &App) -> Result<(), Box<dyn std::error::Error>> {
 
     mesh.draw()?;
 
-    // Draw appropriate grid based on the metric
-    draw_grid(&mut chart_builder, plot_data.len() as f64)?;
-
+    // Draw grid and data
+    draw_grid(&mut chart_builder, plot_data.len() as f64).map_err(wrap_err)?;
+    
     match app.current_metric.as_str() {
-        "Code Changes" => {
-            draw_code_changes(&mut chart_builder, &plot_data)?;
-        }
         "Commits" => {
-            draw_commits(&mut chart_builder, &plot_data)?;
+            draw_commits(&mut chart_builder, &plot_data).map_err(wrap_err)?;
+        }
+        "Code Changes" => {
+            draw_code_changes(&mut chart_builder, &plot_data).map_err(wrap_err)?;
         }
         "Code Frequency" => {
-            draw_code_frequency(&mut chart_builder, &plot_data)?;
+            draw_code_frequency(&mut chart_builder, &plot_data).map_err(wrap_err)?;
         }
         _ => {}
     }
 
-    // Draw legend with improved styling
-    chart_builder
-        .configure_series_labels()
-        .background_style(BLACK.mix(0.8))
-        .border_style(WHITE.mix(0.5))
-        .position(SeriesLabelPosition::UpperRight)
-        .legend_area_size(30)
-        .label_font(("sans-serif", 15).into_font().color(&WHITE.mix(0.8)))
-        .draw()?;
-
-    root_area.present()?;
     Ok(())
 }
 
 fn draw_grid(
     chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedCoordf64, RangedCoordf64>>,
     x_max: f64,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), PlotError> {
     let grid_style = ShapeStyle::from(&WHITE.mix(0.15)).stroke_width(1);
     let major_grid_style = ShapeStyle::from(&WHITE.mix(0.25)).stroke_width(2);
 
@@ -213,7 +282,7 @@ fn draw_grid(
 fn draw_code_changes(
     chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedCoordf64, RangedCoordf64>>,
     plot_data: &[(String, usize, usize)],
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), PlotError> {
     // Smooth the data using moving average
     let window_size = if plot_data.len() < 1000 { 3 } else { 2 };
     let mut smoothed_additions: Vec<(f64, f64)> = Vec::new();
@@ -258,7 +327,7 @@ fn draw_code_changes(
 fn draw_commits(
     chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedCoordf64, RangedCoordf64>>,
     plot_data: &[(String, usize, usize)],
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), PlotError> {
     // Calculate commit counts
     let mut commit_counts = HashMap::new();
     for (date, _, _) in plot_data {
@@ -313,7 +382,7 @@ fn draw_commits(
 fn draw_code_frequency(
     chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedCoordf64, RangedCoordf64>>,
     plot_data: &[(String, usize, usize)],
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), PlotError> {
     let bar_width = 0.8;
 
     // Draw additions (positive bars)
