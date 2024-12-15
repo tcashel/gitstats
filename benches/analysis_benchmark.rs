@@ -1,3 +1,5 @@
+/// Benchmark module for testing performance of Git analysis and plotting operations.
+/// Measures performance of repository analysis, plot generation, and caching.
 use criterion::{criterion_group, criterion_main, Criterion};
 use git2::{Repository, Signature};
 use gitstats::analysis::analyze_repo_async;
@@ -6,6 +8,11 @@ use std::path::Path;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 
+/// Set up a large test repository for benchmarking
+/// Creates a repository with multiple commits and files
+///
+/// # Returns
+/// * `(TempDir, Repository)` - Temporary directory and initialized repository
 fn setup_large_test_repo() -> (TempDir, Repository) {
     let temp_dir = TempDir::new().unwrap();
     let repo = Repository::init(temp_dir.path()).unwrap();
@@ -107,6 +114,11 @@ fn setup_large_test_repo() -> (TempDir, Repository) {
     (temp_dir, repo)
 }
 
+/// Benchmark repository analysis operations
+/// Tests performance of commit processing and data aggregation
+///
+/// # Arguments
+/// * `c` - Criterion benchmark configuration
 fn bench_analysis(c: &mut Criterion) {
     let mut group = c.benchmark_group("repository_analysis");
     let rt = Runtime::new().unwrap();
@@ -159,36 +171,11 @@ fn bench_analysis(c: &mut Criterion) {
     group.finish();
 }
 
-fn bench_data_processing(c: &mut Criterion) {
-    let mut group = c.benchmark_group("data_processing");
-
-    // Small dataset
-    {
-        let mut data = Vec::new();
-        for i in 0..100 {
-            data.push((format!("2023-{:02}-01", (i % 12) + 1), i * 10, i * 5));
-        }
-
-        group.bench_function("aggregate_small_dataset", |b| {
-            b.iter(|| gitstats::utils::aggregate_data(&data, 10));
-        });
-    }
-
-    // Large dataset
-    {
-        let mut data = Vec::new();
-        for i in 0..10000 {
-            data.push((format!("2023-{:02}-01", (i % 12) + 1), i * 10, i * 5));
-        }
-
-        group.bench_function("aggregate_large_dataset", |b| {
-            b.iter(|| gitstats::utils::aggregate_data(&data, 100));
-        });
-    }
-
-    group.finish();
-}
-
+/// Benchmark plot generation operations
+/// Tests performance of different plot types and scaling options
+///
+/// # Arguments
+/// * `c` - Criterion benchmark configuration
 fn bench_plotting(c: &mut Criterion) {
     let mut group = c.benchmark_group("plotting");
     let rt = Runtime::new().unwrap();
@@ -217,7 +204,14 @@ fn bench_plotting(c: &mut Criterion) {
         app.current_metric = "Commits".to_string();
 
         group.bench_function("plot_commits", |b| {
-            b.iter(|| gitstats::plotting::generate_plot(&app).unwrap());
+            let app = app.clone();
+            b.iter(|| {
+                rt.block_on(async {
+                    gitstats::plotting::generate_plot_async(app.clone())
+                        .await
+                        .unwrap()
+                })
+            });
         });
     }
 
@@ -234,7 +228,14 @@ fn bench_plotting(c: &mut Criterion) {
         app.current_metric = "Code Changes".to_string();
 
         group.bench_function("plot_code_changes", |b| {
-            b.iter(|| gitstats::plotting::generate_plot(&app).unwrap());
+            let app = app.clone();
+            b.iter(|| {
+                rt.block_on(async {
+                    gitstats::plotting::generate_plot_async(app.clone())
+                        .await
+                        .unwrap()
+                })
+            });
         });
     }
 
@@ -248,16 +249,29 @@ fn bench_plotting(c: &mut Criterion) {
             .to_str()
             .unwrap()
             .to_string();
+        app.current_metric = "Code Changes".to_string();
         app.use_log_scale = true;
 
         group.bench_function("plot_with_log_scale", |b| {
-            b.iter(|| gitstats::plotting::generate_plot(&app).unwrap());
+            let app = app.clone();
+            b.iter(|| {
+                rt.block_on(async {
+                    gitstats::plotting::generate_plot_async(app.clone())
+                        .await
+                        .unwrap()
+                })
+            });
         });
     }
 
     group.finish();
 }
 
+/// Benchmark caching operations
+/// Tests performance of result caching and retrieval
+///
+/// # Arguments
+/// * `c` - Criterion benchmark configuration
 fn bench_caching(c: &mut Criterion) {
     let mut group = c.benchmark_group("caching");
     let rt = Runtime::new().unwrap();
@@ -288,10 +302,8 @@ fn bench_caching(c: &mut Criterion) {
 }
 
 criterion_group!(
-    benches,
-    bench_analysis,
-    bench_data_processing,
-    bench_plotting,
-    bench_caching
+    name = benches;
+    config = Criterion::default();
+    targets = bench_analysis, bench_plotting, bench_caching
 );
 criterion_main!(benches);

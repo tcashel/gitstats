@@ -1,26 +1,40 @@
+/// Module for generating plots and visualizations of Git repository statistics.
+/// Uses the plotters crate for rendering and supports various metrics and display options.
+use lru::LruCache;
+use once_cell::sync::Lazy;
 use plotters::coord::types::RangedCoordf64;
+use plotters::coord::Shift;
 use plotters::prelude::*;
 use plotters::style::text_anchor::{HPos, Pos, VPos};
-use plotters::coord::Shift;
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::num::NonZeroUsize;
-use lru::LruCache;
-use tokio::sync::Mutex as TokioMutex;
-use std::time::{Duration, Instant};
-use once_cell::sync::Lazy;
 use std::error::Error;
+use std::num::NonZeroUsize;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::Mutex as TokioMutex;
 
 use crate::app::App;
 use crate::utils::aggregate_data;
 
+/// Custom error type for plot-related operations
 type PlotError = Box<dyn Error + Send + Sync>;
+/// Raw plot data as bytes
+type PlotData = Vec<u8>;
+/// Cache entry containing plot data and timestamp
+type PlotCacheEntry = (PlotData, Instant);
+/// LRU cache store for plot data
+type PlotCacheStore = LruCache<PlotCacheKey, PlotCacheEntry>;
+/// Thread-safe plot cache
+type PlotCache = Arc<TokioMutex<PlotCacheStore>>;
 
-// Global plot cache with a 5-minute expiration
-static PLOT_CACHE: Lazy<Arc<TokioMutex<LruCache<PlotCacheKey, (Vec<u8>, Instant)>>>> = Lazy::new(|| {
-    Arc::new(TokioMutex::new(LruCache::new(NonZeroUsize::new(10).unwrap()))) // Cache up to 10 plots
+/// Global plot cache with a 5-minute expiration time
+static PLOT_CACHE: Lazy<PlotCache> = Lazy::new(|| {
+    Arc::new(TokioMutex::new(LruCache::new(
+        NonZeroUsize::new(10).unwrap(),
+    ))) // Cache up to 10 plots
 });
 
+/// Key for plot cache entries, combining metric type and data hash
 #[derive(Hash, Eq, PartialEq)]
 struct PlotCacheKey {
     metric: String,
@@ -34,7 +48,7 @@ impl PlotCacheKey {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         app.commit_activity.hash(&mut hasher);
         app.top_contributors.hash(&mut hasher);
-        
+
         Self {
             metric: app.current_metric.clone(),
             use_log_scale: app.use_log_scale,
@@ -44,51 +58,66 @@ impl PlotCacheKey {
 }
 
 // Helper function to wrap errors
-fn wrap_err<E>(e: E) -> PlotError 
-where 
-    E: Into<Box<dyn Error + Send + Sync>>
+fn wrap_err<E>(e: E) -> PlotError
+where
+    E: Into<Box<dyn Error + Send + Sync>>,
 {
     e.into()
 }
 
-/// Generate a plot based on the current app state
-pub async fn generate_plot_async(app: App) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
+/// Generate a plot asynchronously based on the current app state
+/// Returns a PNG image as bytes or an error
+pub async fn generate_plot_async(app: App) -> Result<PlotData, PlotError> {
     let cache_key = PlotCacheKey::new(&app);
-    
+
     // Try to get from cache first
     if let Some((plot_data, timestamp)) = PLOT_CACHE.lock().await.get(&cache_key) {
-        if timestamp.elapsed() < Duration::from_secs(300) { // 5 minutes
+        if timestamp.elapsed() < Duration::from_secs(300) {
+            // 5 minutes
             return Ok(plot_data.clone());
         }
     }
 
     // Generate new plot in blocking task
     let plot_data = tokio::task::spawn_blocking(move || {
-        let mut buffer = Vec::new();
-        {
-            let root = BitMapBackend::new(&app.plot_path, (640, 480)).into_drawing_area();
-            generate_plot_internal(&app, &root)?;
-            root.present()?;
+        // Create a temporary file for the plot
+        let root = BitMapBackend::new(&app.plot_path, (640, 480)).into_drawing_area();
+        generate_plot_internal(&app, &root)?;
+        root.present()?;
 
-            // Read the file back into buffer
-            buffer = std::fs::read(&app.plot_path)?;
-            // Clean up the temporary file
-            let _ = std::fs::remove_file(&app.plot_path);
-        }
-        Ok::<_, PlotError>(buffer)
+        // Read the file into memory
+        let buffer = std::fs::read(&app.plot_path)?;
+
+        // Clean up the file
+        let _ = std::fs::remove_file(&app.plot_path);
+
+        Ok::<PlotData, PlotError>(buffer)
     })
     .await??;
 
+    // Verify we got valid PNG data
+    const PNG_HEADER: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    if plot_data.len() < 8 || plot_data[0..8] != PNG_HEADER {
+        return Err(wrap_err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Generated data is not a valid PNG",
+        )));
+    }
+
     // Cache the result
-    PLOT_CACHE.lock().await.put(cache_key, (plot_data.clone(), Instant::now()));
+    PLOT_CACHE
+        .lock()
+        .await
+        .put(cache_key, (plot_data.clone(), Instant::now()));
 
     Ok(plot_data)
 }
 
-/// Internal function to generate the plot
-pub fn generate_plot_internal(
-    app: &App, 
-    root_area: &DrawingArea<BitMapBackend, Shift>
+/// Internal function to generate the plot using plotters
+/// Handles the actual rendering of different plot types
+fn generate_plot_internal(
+    app: &App,
+    root_area: &DrawingArea<BitMapBackend, Shift>,
 ) -> Result<(), PlotError> {
     root_area.fill(&BLACK.mix(0.95)).map_err(wrap_err)?;
 
@@ -128,7 +157,7 @@ pub fn generate_plot_internal(
     let dates: Vec<String> = plot_data.iter().map(|(date, _, _)| date.clone()).collect();
 
     // Build the chart with improved styling
-    let mut chart_builder = ChartBuilder::on(&root_area)
+    let mut chart_builder = ChartBuilder::on(root_area)
         .caption(
             format!("{} Over Time", app.current_metric),
             ("sans-serif", 30).into_font().color(&WHITE.mix(0.8)),
@@ -202,7 +231,7 @@ pub fn generate_plot_internal(
 
     // Draw grid and data
     draw_grid(&mut chart_builder, plot_data.len() as f64).map_err(wrap_err)?;
-    
+
     match app.current_metric.as_str() {
         "Commits" => {
             draw_commits(&mut chart_builder, &plot_data).map_err(wrap_err)?;
@@ -219,6 +248,7 @@ pub fn generate_plot_internal(
     Ok(())
 }
 
+/// Draw grid lines with adaptive spacing based on data range
 fn draw_grid(
     chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedCoordf64, RangedCoordf64>>,
     x_max: f64,
@@ -279,6 +309,8 @@ fn draw_grid(
     Ok(())
 }
 
+/// Draw code changes plot showing additions and deletions over time
+/// Uses smoothed line series with different colors for additions and deletions
 fn draw_code_changes(
     chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedCoordf64, RangedCoordf64>>,
     plot_data: &[(String, usize, usize)],
@@ -324,6 +356,8 @@ fn draw_code_changes(
     Ok(())
 }
 
+/// Draw commit frequency plot with smoothed line series
+/// Includes glow effect for better visualization
 fn draw_commits(
     chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedCoordf64, RangedCoordf64>>,
     plot_data: &[(String, usize, usize)],
@@ -379,6 +413,7 @@ fn draw_commits(
     Ok(())
 }
 
+/// Draw code frequency plot with stacked bars for additions and deletions
 fn draw_code_frequency(
     chart_builder: &mut ChartContext<BitMapBackend, Cartesian2d<RangedCoordf64, RangedCoordf64>>,
     plot_data: &[(String, usize, usize)],
@@ -414,6 +449,8 @@ fn draw_code_frequency(
     Ok(())
 }
 
+/// Calculate adaptive range for plot axis with outlier handling
+/// Returns (min, max) tuple with adjusted ranges to handle extreme values
 fn calculate_adaptive_range(values: &[f64]) -> (f64, f64) {
     let mut sorted = values.to_vec();
     sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));

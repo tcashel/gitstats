@@ -1,12 +1,32 @@
-use chrono::{DateTime, Utc};
-use git2::{Error, Repository, Oid};
-use std::collections::HashMap;
-use tokio::task::spawn_blocking;
-use std::time::Instant;
-
+/// Module for Git repository analysis and statistics collection.
+/// Provides async functions for analyzing repositories, handling branches, and processing commits.
 use crate::types::AnalysisResult;
+use chrono::{DateTime, Utc};
+use git2::{Error, Oid, Repository};
+use std::collections::HashMap;
+use std::time::Instant;
+use tokio::task::spawn_blocking;
 
-/// Analyze a Git repository asynchronously
+/// Tuple containing commit statistics (count, lines added, lines deleted)
+type CommitData = (usize, usize, usize);
+/// Vector of activity data entries (date, lines added, lines deleted)
+type ActivityData = Vec<(String, usize, usize)>;
+/// Map of contributor names to their commit counts
+type ContributorData = HashMap<String, usize>;
+/// Combined tuple of all process results
+type ProcessResult = (CommitData, ActivityData, ContributorData);
+/// Result type for chunk processing operations
+type ChunkResult = Result<ProcessResult, Error>;
+
+/// Analyze a Git repository asynchronously with specified branch and contributor filters
+///
+/// # Arguments
+/// * `path` - Path to the Git repository
+/// * `branch` - Branch name to analyze (defaults to HEAD if not found)
+/// * `contributor` - Contributor name to filter by ("All" for no filter)
+///
+/// # Returns
+/// * `Result<AnalysisResult, Error>` - Analysis results or Git error
 pub async fn analyze_repo_async(
     path: String,
     branch: String,
@@ -22,9 +42,16 @@ pub async fn analyze_repo_async(
 }
 
 /// Get list of available branches in the repository
+/// Orders branches to prioritize main/master as the first branch
+///
+/// # Arguments
+/// * `repo` - Reference to the Git repository
+///
+/// # Returns
+/// * `Result<Vec<String>, Error>` - List of branch names or Git error
 pub async fn get_available_branches(repo: &Repository) -> Result<Vec<String>, Error> {
     let repo_path = repo.path().to_path_buf();
-    
+
     // Move git operations to a blocking task with a new repo instance
     spawn_blocking(move || {
         let repo = Repository::open(repo_path)?;
@@ -50,23 +77,28 @@ pub async fn get_available_branches(repo: &Repository) -> Result<Vec<String>, Er
     .map_err(|e| Error::from_str(&e.to_string()))?
 }
 
-/// Process a chunk of commits
-fn process_commit_chunk(
-    repo: &Repository,
-    chunk: &[Oid],
-    contributor: &str,
-) -> Result<(usize, usize, usize, Vec<(String, usize, usize)>, HashMap<String, usize>), Error> {
+/// Process a chunk of commits to gather statistics
+///
+/// # Arguments
+/// * `repo` - Reference to the Git repository
+/// * `chunk` - Slice of commit OIDs to process
+/// * `contributor` - Contributor name to filter by
+///
+/// # Returns
+/// * `ChunkResult` - Processed statistics or Git error
+fn process_commit_chunk(repo: &Repository, chunk: &[Oid], contributor: &str) -> ChunkResult {
     let mut commit_count = 0;
     let mut total_lines_added = 0;
     let mut total_lines_deleted = 0;
-    let mut author_commit_count: HashMap<String, usize> = HashMap::new();
-    let mut commit_activity: Vec<(String, usize, usize)> = Vec::with_capacity(chunk.len());
+    let mut author_commit_count = HashMap::new();
+    let mut commit_activity = Vec::with_capacity(chunk.len());
 
     // Pre-allocate a diff options object to reuse
     let mut diff_opts = git2::DiffOptions::new();
-    diff_opts.include_untracked(false)
-             .ignore_whitespace(true)
-             .context_lines(0);
+    diff_opts
+        .include_untracked(false)
+        .ignore_whitespace(true)
+        .context_lines(0);
 
     for &oid in chunk {
         let commit = repo.find_commit(oid)?;
@@ -88,11 +120,14 @@ fn process_commit_chunk(
         // Optimize tree diffing
         if let (Ok(tree), Some(Ok(parent_tree))) = (
             commit.tree(),
-            commit.parent_count().checked_sub(1).and_then(|_| {
-                commit.parent(0).ok().map(|parent| parent.tree())
-            }),
+            commit
+                .parent_count()
+                .checked_sub(1)
+                .and_then(|_| commit.parent(0).ok().map(|parent| parent.tree())),
         ) {
-            if let Ok(diff) = repo.diff_tree_to_tree(Some(&parent_tree), Some(&tree), Some(&mut diff_opts)) {
+            if let Ok(diff) =
+                repo.diff_tree_to_tree(Some(&parent_tree), Some(&tree), Some(&mut diff_opts))
+            {
                 if let Ok(stats) = diff.stats() {
                     let lines_added = stats.insertions();
                     let lines_deleted = stats.deletions();
@@ -110,15 +145,20 @@ fn process_commit_chunk(
     }
 
     Ok((
-        commit_count,
-        total_lines_added,
-        total_lines_deleted,
+        (commit_count, total_lines_added, total_lines_deleted),
         commit_activity,
         author_commit_count,
     ))
 }
 
-/// Get optimal chunk size based on commit count
+/// Calculate optimal chunk size for parallel processing based on commit count
+/// Balances processing time and memory usage
+///
+/// # Arguments
+/// * `_total_commits` - Total number of commits to process
+///
+/// # Returns
+/// * `usize` - Optimal chunk size between MIN_CHUNK_SIZE and MAX_CHUNK_SIZE
 fn get_optimal_chunk_size(_total_commits: usize) -> usize {
     // Aim for chunks that will take ~100ms to process
     const TARGET_CHUNK_TIME_MS: usize = 100;
@@ -130,20 +170,33 @@ fn get_optimal_chunk_size(_total_commits: usize) -> usize {
     optimal_size.clamp(MIN_CHUNK_SIZE, MAX_CHUNK_SIZE)
 }
 
-/// Get optimal number of parallel tasks based on system resources
+/// Get optimal number of parallel tasks based on system CPU count
+/// Uses 75% of available CPUs to leave room for other processes
+///
+/// # Returns
+/// * `usize` - Number of parallel tasks to use
 fn get_optimal_task_count() -> usize {
     let cpu_count = num_cpus::get();
     // Use 75% of available CPUs to leave room for other system processes
     (cpu_count * 3 / 4).max(1)
 }
 
-/// Process commits in parallel chunks
+/// Process commits in parallel chunks with performance tracking
+///
+/// # Arguments
+/// * `repo_path` - Path to the Git repository
+/// * `commits` - Vector of commit OIDs to process
+/// * `contributor` - Contributor name to filter by
+/// * `_chunk_size` - Suggested chunk size (may be adjusted)
+///
+/// # Returns
+/// * `Result<(ProcessResult, String), Error>` - Processed results and performance stats
 async fn process_commits_parallel(
     repo_path: std::path::PathBuf,
     commits: Vec<Oid>,
     contributor: String,
     _chunk_size: usize,
-) -> Result<(usize, usize, usize, Vec<(String, usize, usize)>, HashMap<String, usize>, String), Error> {
+) -> Result<(ProcessResult, String), Error> {
     let start_time = Instant::now();
     let total_commits = commits.len();
 
@@ -161,19 +214,22 @@ async fn process_commits_parallel(
         let contributor = contributor.clone();
         let permit = match semaphore.clone().acquire_owned().await {
             Ok(permit) => permit,
-            Err(e) => return Err(Error::from_str(&format!("Failed to acquire semaphore: {}", e))),
+            Err(e) => {
+                return Err(Error::from_str(&format!(
+                    "Failed to acquire semaphore: {}",
+                    e
+                )))
+            }
         };
 
         let handle = tokio::spawn(async move {
             let _permit = permit;
-            let result = spawn_blocking(move || {
+            spawn_blocking(move || {
                 let repo = Repository::open(repo_path)?;
                 process_commit_chunk(&repo, &chunk, &contributor)
             })
             .await
-            .map_err(|e| Error::from_str(&e.to_string()))?;
-
-            result
+            .map_err(|e| Error::from_str(&e.to_string()))?
         });
         results.push(handle);
     }
@@ -187,7 +243,7 @@ async fn process_commits_parallel(
 
     for handle in results {
         match handle.await {
-            Ok(Ok((commits, lines_added, lines_deleted, activity, authors))) => {
+            Ok(Ok(((commits, lines_added, lines_deleted), activity, authors))) => {
                 total_commit_count += commits;
                 total_lines_added += lines_added;
                 total_lines_deleted += lines_deleted;
@@ -211,24 +267,29 @@ async fn process_commits_parallel(
 
     let stats = format!(
         "Processed {} commits in {:.2}s\nCommits/sec: {:.1}\nChunk size: {}\nParallel tasks: {}",
-        total_commits,
-        elapsed_secs,
-        commits_per_sec,
-        optimal_chunk_size,
-        max_tasks
+        total_commits, elapsed_secs, commits_per_sec, optimal_chunk_size, max_tasks
     );
 
     Ok((
-        total_commit_count,
-        total_lines_added,
-        total_lines_deleted,
-        total_commit_activity,
-        total_author_count,
+        (
+            (total_commit_count, total_lines_added, total_lines_deleted),
+            total_commit_activity,
+            total_author_count,
+        ),
         stats,
     ))
 }
 
 /// Analyze a Git repository with branch and contributor filters
+/// Handles the main analysis workflow including parallel processing
+///
+/// # Arguments
+/// * `repo` - Git repository instance
+/// * `branch` - Branch name to analyze
+/// * `contributor` - Contributor name to filter by
+///
+/// # Returns
+/// * `Result<AnalysisResult, Error>` - Complete analysis results or Git error
 async fn analyze_repo_with_filter(
     repo: Repository,
     branch: &str,
@@ -245,7 +306,7 @@ async fn analyze_repo_with_filter(
         spawn_blocking(move || {
             let repo = Repository::open(&repo_path)?;
             let mut revwalk = repo.revwalk()?;
-            
+
             if let Ok(branch_ref) = repo.find_branch(&branch, git2::BranchType::Local) {
                 if let Some(branch_ref_name) = branch_ref.get().name() {
                     revwalk.push_ref(branch_ref_name)?;
@@ -264,10 +325,13 @@ async fn analyze_repo_with_filter(
     };
 
     // Process commits in parallel chunks
-    let (commit_count, total_lines_added, total_lines_deleted, commit_activity, author_commit_count, stats) =
+    let ((commit_stats, commit_activity, author_commit_count), stats) =
         process_commits_parallel(repo_path.clone(), commits, contributor.clone(), 1000).await?;
 
-    let mut top_contributors: Vec<(String, usize)> = author_commit_count.clone().into_iter().collect();
+    let (commit_count, total_lines_added, total_lines_deleted) = commit_stats;
+
+    let mut top_contributors: Vec<(String, usize)> =
+        author_commit_count.clone().into_iter().collect();
     top_contributors.sort_by(|a, b| b.1.cmp(&a.1));
     top_contributors.truncate(5);
 

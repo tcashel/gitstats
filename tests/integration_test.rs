@@ -1,3 +1,5 @@
+/// Integration tests for the GitStats application.
+/// Tests the full workflow from repository analysis to plot generation.
 use git2::{Repository, Signature};
 use gitstats::app::App;
 use std::fs;
@@ -5,6 +7,10 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
+/// Set up a test Git repository with sample commits and files
+///
+/// # Returns
+/// * `(TempDir, Repository)` - Temporary directory and initialized repository
 fn setup_test_repo() -> (TempDir, Repository) {
     let temp_dir = TempDir::new().unwrap();
     let repo = Repository::init(temp_dir.path()).unwrap();
@@ -67,6 +73,23 @@ fn setup_test_repo() -> (TempDir, Repository) {
     (temp_dir, repo)
 }
 
+/// Set up a test application instance with sample data
+///
+/// # Returns
+/// * `App` - Initialized application instance with test data
+fn setup_test_app() -> App {
+    let mut app = App::default();
+    app.plot_path = "test_plot.png".to_string();
+    app.commit_activity = vec![
+        ("2023-01-01".to_string(), 10, 5),
+        ("2023-01-02".to_string(), 15, 8),
+        ("2023-01-03".to_string(), 20, 10),
+    ];
+    app
+}
+
+/// Test the complete application workflow
+/// Tests repository analysis, branch selection, plot generation, and caching
 #[tokio::test]
 async fn test_full_workflow() {
     let (temp_dir, _repo) = setup_test_repo();
@@ -121,18 +144,49 @@ async fn test_full_workflow() {
     // Test plot generation
     {
         let mut app = app.lock().unwrap();
-        app.plot_path = temp_dir
+        let plot_path = temp_dir
             .path()
             .join("test_plot.png")
             .to_str()
             .unwrap()
             .to_string();
+        app.plot_path = plot_path.clone();
+        app.commit_activity = vec![
+            ("2023-01-01".to_string(), 10, 5),
+            ("2023-01-02".to_string(), 15, 8),
+            ("2023-01-03".to_string(), 20, 10),
+        ];
 
         // Test different metrics
         for metric in &["Commits", "Code Changes", "Code Frequency"] {
-            app.current_metric = metric.to_string();
-            assert!(gitstats::plotting::generate_plot(&app).is_ok());
-            assert!(fs::metadata(&app.plot_path).is_ok());
+            let mut app_clone = App::default();
+            app_clone.plot_path = plot_path.clone();
+            app_clone.commit_activity = app.commit_activity.clone();
+            app_clone.current_metric = metric.to_string();
+
+            // Generate the plot and verify we get data back
+            let plot_result = gitstats::plotting::generate_plot_async(app_clone).await;
+            assert!(
+                plot_result.is_ok(),
+                "Failed to generate plot for metric {}: {:?}",
+                metric,
+                plot_result
+            );
+
+            let plot_data = plot_result.unwrap();
+            assert!(
+                !plot_data.is_empty(),
+                "Plot data is empty for metric {}",
+                metric
+            );
+
+            // Verify it's a valid PNG file
+            assert_eq!(
+                &plot_data[0..8],
+                &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+                "Invalid PNG header for metric {}",
+                metric
+            );
         }
     }
 
@@ -159,19 +213,23 @@ async fn test_full_workflow() {
 
     // Test caching
     {
-        if let Ok(app) = app.lock() {
-            let cache_key = gitstats::types::CacheKey {
+        let cache_key = {
+            let app = app.lock().unwrap();
+            gitstats::types::CacheKey {
                 branch: app.selected_branch.clone(),
                 contributor: app.selected_contributor.clone(),
-            };
+            }
+        };
 
-            assert!(app
-                .get_cached_result(&cache_key.branch, &cache_key.contributor)
-                .is_some());
-        }
+        let app = app.lock().unwrap();
+        assert!(app
+            .get_cached_result(&cache_key.branch, &cache_key.contributor)
+            .is_some());
     }
 }
 
+/// Test error handling in repository operations
+/// Tests invalid repository paths and branch names
 #[tokio::test]
 async fn test_error_handling() {
     let app = Arc::new(Mutex::new(App::default()));
@@ -207,4 +265,12 @@ async fn test_error_handling() {
         // Should fall back to HEAD
         assert!(result.is_ok());
     }
+}
+
+/// Test plot generation functionality
+/// Tests generation of plots with sample data
+#[tokio::test]
+async fn test_plot_generation() {
+    let app = setup_test_app();
+    assert!(gitstats::plotting::generate_plot_async(app).await.is_ok());
 }

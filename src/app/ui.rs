@@ -1,3 +1,5 @@
+/// Module for handling the application's user interface using egui.
+/// Provides functions for drawing the UI and handling user interactions.
 use egui::{ComboBox, Context};
 use image::ImageReader;
 use std::sync::{Arc, Mutex};
@@ -7,6 +9,17 @@ use crate::analysis::analyze_repo_async;
 use crate::plotting::chart::generate_plot_async;
 
 /// Draw the main application UI
+///
+/// # Arguments
+/// * `app` - Mutable reference to the application state
+/// * `ctx` - Reference to the egui context
+/// * `app_arc` - Thread-safe reference to the application state
+///
+/// Handles drawing of:
+/// - Side panel with analysis options and metrics
+/// - Main panel with repository input and results
+/// - Performance metrics display
+/// - Plot visualization
 pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
     egui::SidePanel::left("side_panel").show(ctx, |ui| {
         ui.heading("Analysis Options");
@@ -114,7 +127,8 @@ pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
             tokio::task::spawn_blocking(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 rt.block_on(async {
-                    match analyze_repo_async(repo_path, selected_branch, selected_contributor).await {
+                    match analyze_repo_async(repo_path, selected_branch, selected_contributor).await
+                    {
                         Ok(result) => {
                             if let Ok(mut app) = app_clone.lock() {
                                 app.update_with_result(result);
@@ -178,26 +192,33 @@ pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
                 if let Ok(plot_data) = generate_plot_async(app_clone).await {
-                    if let Ok(_) = tokio::fs::write(&plot_path, &plot_data).await {
-                        if let Some(image) = load_plot_texture_async(plot_path).await {
-                            let texture = ctx.load_texture(
-                                "plot_texture",
-                                image,
-                                egui::TextureOptions::LINEAR,
-                            );
-                            if let Ok(mut app) = app_arc.lock() {
-                                app.plot_texture = Some(texture);
-                            }
+                    let plot_path = plot_path.clone();
+                    if tokio::fs::write(&plot_path, &plot_data).await.is_ok() {
+                        if let Ok(mut app) = app_arc.lock() {
+                            app.plot_path = plot_path.clone();
+                        }
+                    }
+
+                    if let Some(image) = load_plot_texture_async(plot_path).await {
+                        let texture =
+                            ctx.load_texture("plot_texture", image, egui::TextureOptions::LINEAR);
+                        if let Ok(mut app) = app_arc.lock() {
+                            app.plot_texture = Some(texture);
+                            app.update_needed = false;
                         }
                     }
                 }
             });
         });
-        
-        app.update_needed = false;
     }
 }
 
+/// Handle changes in branch or contributor selection
+/// Updates the analysis results either from cache or by running a new analysis
+///
+/// # Arguments
+/// * `app` - Mutable reference to the application state
+/// * `app_arc` - Thread-safe reference to the application state for async operations
 fn handle_selection_change(app: &mut App, app_arc: Arc<Mutex<App>>) {
     if let Some(cached_result) =
         app.get_cached_result(&app.selected_branch, &app.selected_contributor)
@@ -232,6 +253,13 @@ fn handle_selection_change(app: &mut App, app_arc: Arc<Mutex<App>>) {
     }
 }
 
+/// Load and convert a plot image file into an egui texture asynchronously
+///
+/// # Arguments
+/// * `path` - Path to the plot image file
+///
+/// # Returns
+/// * `Option<egui::ColorImage>` - The loaded image converted to egui format, or None if loading fails
 async fn load_plot_texture_async(path: String) -> Option<egui::ColorImage> {
     tokio::task::spawn_blocking(move || {
         ImageReader::open(&path)
