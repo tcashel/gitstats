@@ -113,6 +113,7 @@ async fn test_full_workflow() {
                 app.repo_path.clone(),
                 "main".to_string(),
                 "All".to_string(),
+                None,
             )
             .await
             .unwrap();
@@ -180,11 +181,24 @@ async fn test_full_workflow() {
                 metric
             );
 
-            // Verify it's a valid PNG file
+            // Verify it's valid RGBA data (4 bytes per pixel)
+            let width = 640;
+            let height = 480;
+            let expected_size = width * height * 4;
             assert_eq!(
-                &plot_data[0..8],
-                &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
-                "Invalid PNG header for metric {}",
+                plot_data.len(),
+                expected_size,
+                "Invalid RGBA data size for metric {}. Expected {} bytes, got {}",
+                metric,
+                expected_size,
+                plot_data.len()
+            );
+
+            // Verify first pixel is in RGBA format (4 bytes)
+            assert_eq!(
+                plot_data.len() >= 4,
+                true,
+                "Plot data too short for metric {}",
                 metric
             );
         }
@@ -202,6 +216,7 @@ async fn test_full_workflow() {
                 app.repo_path.clone(),
                 app.selected_branch.clone(),
                 contributor,
+                None,
             )
             .await
             .unwrap();
@@ -243,6 +258,7 @@ async fn test_error_handling() {
             app.repo_path.clone(),
             "main".to_string(),
             "All".to_string(),
+            None,
         )
         .await;
 
@@ -259,6 +275,7 @@ async fn test_error_handling() {
             app.repo_path.clone(),
             "nonexistent-branch".to_string(),
             "All".to_string(),
+            None,
         )
         .await;
 

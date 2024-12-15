@@ -1,11 +1,11 @@
 /// Benchmark module for testing performance of Git analysis and plotting operations.
 /// This module compares our implementation against native git commands and tests
 /// both fast path (using git's internal files) and full path (walking commits) operations.
-/// 
+///
 /// The benchmarks use both:
 /// 1. A synthetic test repository (setup_large_test_repo)
 /// 2. A real-world repository (ripgrep)
-/// 
+///
 /// Key benchmark categories:
 /// - Git operations: Native git command performance
 /// - Fast path: Our optimized implementation using git's internal files
@@ -49,10 +49,7 @@ fn get_git_contributor_stats(repo_path: &Path, branch: &str) -> Vec<(String, usi
         .map(|line| {
             let parts: Vec<_> = line.trim().splitn(2, '\t').collect();
             if parts.len() == 2 {
-                (
-                    parts[1].to_string(),
-                    parts[0].trim().parse().unwrap_or(0),
-                )
+                (parts[1].to_string(), parts[0].trim().parse().unwrap_or(0))
             } else {
                 ("Unknown".to_string(), 0)
             }
@@ -89,7 +86,7 @@ fn get_git_filtered_stats(repo_path: &Path, author: &str) -> String {
 fn setup_real_world_repo() -> (TempDir, Repository) {
     let temp_dir = TempDir::new().unwrap();
     println!("Cloning ripgrep repository...");
-    
+
     Command::new("git")
         .current_dir(temp_dir.path())
         .args(&["clone", "https://github.com/BurntSushi/ripgrep.git", "."])
@@ -226,7 +223,7 @@ fn setup_large_test_repo() -> (TempDir, Repository) {
 /// 1. Native git commands (baseline)
 /// 2. Our fast path implementation (using git's internal files)
 /// 3. Our full path implementation (walking commits)
-/// 
+///
 /// Tests the following operations:
 /// - count_commits_git: Native git commit counting
 /// - count_commits_ours_fast: Our fast path using git's internal files
@@ -241,7 +238,7 @@ fn setup_large_test_repo() -> (TempDir, Repository) {
 fn bench_analysis(c: &mut Criterion) {
     let mut group = c.benchmark_group("git_comparison");
     let rt = Runtime::new().unwrap();
-    
+
     // Set up real-world repo
     let (real_dir, _real_repo) = setup_real_world_repo();
     let test_contributor = get_most_active_contributor(real_dir.path());
@@ -259,7 +256,8 @@ fn bench_analysis(c: &mut Criterion) {
                 analyze_repo_async(
                     real_dir.path().to_str().unwrap().to_string(),
                     "main".to_string(),
-                    "All".to_string(), // "All" triggers fast path
+                    "All".to_string(),
+                    None,
                 )
                 .await
                 .unwrap()
@@ -275,7 +273,8 @@ fn bench_analysis(c: &mut Criterion) {
                 analyze_repo_async(
                     real_dir.path().to_str().unwrap().to_string(),
                     "main".to_string(),
-                    test_contributor.clone(), // Clone for owned String
+                    test_contributor.clone(),
+                    None,
                 )
                 .await
                 .unwrap()
@@ -295,7 +294,8 @@ fn bench_analysis(c: &mut Criterion) {
                 analyze_repo_async(
                     real_dir.path().to_str().unwrap().to_string(),
                     "main".to_string(),
-                    "All".to_string(), // "All" triggers fast path
+                    "All".to_string(),
+                    None,
                 )
                 .await
                 .unwrap()
@@ -310,7 +310,8 @@ fn bench_analysis(c: &mut Criterion) {
                 analyze_repo_async(
                     real_dir.path().to_str().unwrap().to_string(),
                     "main".to_string(),
-                    test_contributor.clone(), // Clone for owned String
+                    test_contributor.clone(),
+                    None,
                 )
                 .await
                 .unwrap()
@@ -331,6 +332,7 @@ fn bench_analysis(c: &mut Criterion) {
                     real_dir.path().to_str().unwrap().to_string(),
                     "main".to_string(),
                     "All".to_string(),
+                    None,
                 )
                 .await
                 .unwrap()
@@ -341,9 +343,7 @@ fn bench_analysis(c: &mut Criterion) {
 
     // Filtered stats comparison (always uses full path)
     group.bench_function("filtered_stats_git", |b| {
-        b.iter(|| {
-            get_git_filtered_stats(real_dir.path(), &test_contributor)
-        });
+        b.iter(|| get_git_filtered_stats(real_dir.path(), &test_contributor));
     });
 
     group.bench_function("filtered_stats_ours_full", |b| {
@@ -352,7 +352,8 @@ fn bench_analysis(c: &mut Criterion) {
                 analyze_repo_async(
                     real_dir.path().to_str().unwrap().to_string(),
                     "main".to_string(),
-                    test_contributor.clone(), // Clone for owned String
+                    test_contributor.clone(),
+                    None,
                 )
                 .await
                 .unwrap()
@@ -366,12 +367,12 @@ fn bench_analysis(c: &mut Criterion) {
 
 /// Benchmark plot generation operations
 /// Tests the performance of different visualization types and options:
-/// 
+///
 /// Plot types:
 /// - plot_commits: Commit frequency over time
 /// - plot_code_changes: Lines added/deleted over time
 /// - plot_with_log_scale: Code changes with logarithmic scaling
-/// 
+///
 /// Each benchmark measures:
 /// - Data preparation time
 /// - Plot generation time
@@ -386,6 +387,7 @@ fn bench_plotting(c: &mut Criterion) {
             temp_dir.path().to_str().unwrap().to_string(),
             "main".to_string(),
             "All".to_string(),
+            None,
         )
         .await
         .unwrap()
@@ -469,11 +471,11 @@ fn bench_plotting(c: &mut Criterion) {
 
 /// Benchmark caching operations
 /// Tests the performance of the result caching system:
-/// 
+///
 /// Operations tested:
 /// - cache_lookup: Time to retrieve cached analysis results
 /// - Uses CacheKey combining branch and contributor
-/// 
+///
 /// Cache characteristics:
 /// - In-memory storage
 /// - Key-based lookup
@@ -488,9 +490,14 @@ fn bench_caching(c: &mut Criterion) {
 
     // Pre-populate cache
     let result = rt.block_on(async {
-        analyze_repo_async(app.repo_path.clone(), "main".to_string(), "All".to_string())
-            .await
-            .unwrap()
+        analyze_repo_async(
+            app.repo_path.clone(),
+            "main".to_string(),
+            "All".to_string(),
+            None,
+        )
+        .await
+        .unwrap()
     });
     app.update_with_result(result);
 

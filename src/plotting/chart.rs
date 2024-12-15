@@ -82,27 +82,22 @@ pub async fn generate_plot_async(app: App) -> Result<PlotData, PlotError> {
     let plot_data = tokio::task::spawn_blocking(move || {
         // Create a temporary file for the plot
         let root = BitMapBackend::new(&app.plot_path, (640, 480)).into_drawing_area();
+        root.fill(&BLACK.mix(0.95))?;
+
         generate_plot_internal(&app, &root)?;
         root.present()?;
 
-        // Read the file into memory
-        let buffer = std::fs::read(&app.plot_path)?;
+        // Convert the plot to RGBA format
+        let img = image::open(&app.plot_path)?;
+        let rgba = img.into_rgba8();
+        let pixels = rgba.as_raw().to_vec();
 
-        // Clean up the file
+        // Clean up the temporary file
         let _ = std::fs::remove_file(&app.plot_path);
 
-        Ok::<PlotData, PlotError>(buffer)
+        Ok::<PlotData, PlotError>(pixels)
     })
     .await??;
-
-    // Verify we got valid PNG data
-    const PNG_HEADER: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
-    if plot_data.len() < 8 || plot_data[0..8] != PNG_HEADER {
-        return Err(wrap_err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "Generated data is not a valid PNG",
-        )));
-    }
 
     // Cache the result
     PLOT_CACHE

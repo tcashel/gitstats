@@ -4,10 +4,10 @@ use crate::types::{AnalysisResult, ProgressEstimate};
 use chrono::{DateTime, Utc};
 use git2::{Error, Oid, Repository};
 use std::collections::HashMap;
-use std::time::Instant;
-use tokio::task::spawn_blocking;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::mpsc;
+use tokio::task::spawn_blocking;
 
 /// Tuple containing commit statistics (count, lines added, lines deleted)
 type CommitData = (usize, usize, usize);
@@ -36,7 +36,7 @@ fn process_commit_chunk(repo: &Repository, chunk: &[Oid], contributor: &str) -> 
         .context_lines(0)
         .ignore_filemode(true)
         .ignore_submodules(true)
-        .minimal(true)  // Use minimal diff like Git
+        .minimal(true) // Use minimal diff like Git
         .patience(true) // Use patience diff algorithm like Git
         .indent_heuristic(true); // Use indent heuristic like Git
 
@@ -63,7 +63,7 @@ fn process_commit_chunk(repo: &Repository, chunk: &[Oid], contributor: &str) -> 
         // Calculate diff stats for the commit
         if let Ok(tree) = commit.tree() {
             let parent_count = commit.parent_count();
-            
+
             // For non-merge commits or initial commits
             if parent_count <= 1 {
                 let parent_tree = if parent_count == 1 {
@@ -72,11 +72,9 @@ fn process_commit_chunk(repo: &Repository, chunk: &[Oid], contributor: &str) -> 
                     None
                 };
 
-                if let Ok(diff) = repo.diff_tree_to_tree(
-                    parent_tree.as_ref(),
-                    Some(&tree),
-                    Some(&mut diff_opts)
-                ) {
+                if let Ok(diff) =
+                    repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut diff_opts))
+                {
                     // Process each file delta to match git's numstat behavior
                     diff.foreach(
                         &mut |delta, _progress| {
@@ -110,7 +108,7 @@ fn process_commit_chunk(repo: &Repository, chunk: &[Oid], contributor: &str) -> 
                             if let Ok(diff) = repo.diff_tree_to_tree(
                                 Some(&parent_tree),
                                 Some(&tree),
-                                Some(&mut diff_opts)
+                                Some(&mut diff_opts),
                             ) {
                                 diff.foreach(
                                     &mut |delta, _progress| {
@@ -198,24 +196,32 @@ async fn process_commits_parallel(
 
     for chunk in chunks {
         let chunk = chunk.to_vec();
+        let chunk_len = chunk.len();
         let repo_path = repo_path.clone();
         let contributor = contributor.clone();
         let processed_commits = Arc::clone(&processed_commits);
         let progress_tx = progress_tx.clone();
-        let permit = semaphore.clone().acquire_owned().await
+        let permit = semaphore
+            .clone()
+            .acquire_owned()
+            .await
             .map_err(|e: tokio::sync::AcquireError| Error::from_str(&e.to_string()))?;
 
         let handle = tokio::spawn(async move {
             let _permit = permit;
-            let result = spawn_blocking(move || -> Result<(CommitData, ActivityData, ContributorData), Error> {
-                let repo = Repository::open(repo_path)?;
-                process_commit_chunk(&repo, &chunk, &contributor)
-            })
+            let result = spawn_blocking(
+                move || -> Result<(CommitData, ActivityData, ContributorData), Error> {
+                    let repo = Repository::open(repo_path)?;
+                    process_commit_chunk(&repo, &chunk, &contributor)
+                },
+            )
             .await
             .map_err(|e: tokio::task::JoinError| Error::from_str(&e.to_string()))?;
 
             // Update progress after each chunk
-            let current = processed_commits.fetch_add(chunk.len(), std::sync::atomic::Ordering::SeqCst) + chunk.len();
+            let current = processed_commits
+                .fetch_add(chunk_len, std::sync::atomic::Ordering::SeqCst)
+                + chunk_len;
             if let Some(tx) = &progress_tx {
                 let elapsed = start_time.elapsed().as_secs_f64();
                 let commits_per_second = current as f64 / elapsed;
@@ -312,8 +318,14 @@ async fn analyze_repo_with_filter(
     };
 
     let chunk_size = get_optimal_chunk_size(commits.len());
-    let ((commit_stats, commit_activity, author_commit_count), stats) =
-        process_commits_parallel(repo_path.clone(), commits, contributor.to_string(), chunk_size, progress_tx).await?;
+    let ((commit_stats, commit_activity, author_commit_count), stats) = process_commits_parallel(
+        repo_path.clone(),
+        commits,
+        contributor.to_string(),
+        chunk_size,
+        progress_tx,
+    )
+    .await?;
 
     let (commit_count, total_lines_added, total_lines_deleted) = commit_stats;
 
@@ -388,12 +400,10 @@ pub async fn analyze_repo_async(
     contributor: String,
     progress_tx: Option<mpsc::Sender<ProgressEstimate>>,
 ) -> Result<AnalysisResult, Error> {
-    let repo = spawn_blocking(move || -> Result<Repository, Error> {
-        Repository::open(&path)
-    })
-    .await
-    .map_err(|e: tokio::task::JoinError| Error::from_str(&e.to_string()))?
-    .map_err(|e: Error| Error::from_str(&e.to_string()))?;
+    let repo = spawn_blocking(move || -> Result<Repository, Error> { Repository::open(&path) })
+        .await
+        .map_err(|e: tokio::task::JoinError| Error::from_str(&e.to_string()))?
+        .map_err(|e: Error| Error::from_str(&e.to_string()))?;
 
     analyze_repo_with_filter(repo, &branch, &contributor, progress_tx).await
 }

@@ -68,19 +68,19 @@ impl App {
         // Update performance metrics
         self.last_analysis_time = Some(result.elapsed_time);
         self.commits_per_second = Some(result.commit_count as f64 / result.elapsed_time);
-        self.processing_stats = result.processing_stats;
+        self.processing_stats = result.processing_stats.clone();
 
         // Update other stats
         self.commit_count = result.commit_count;
         self.total_lines_added = result.total_lines_added;
         self.total_lines_deleted = result.total_lines_deleted;
-        self.top_contributors = result.top_contributors;
-        self.commit_activity = result.commit_activity;
+        self.top_contributors = result.top_contributors.clone();
+        self.commit_activity = result.commit_activity.clone();
         self.average_commit_size = result.average_commit_size;
-        self.commit_frequency = result.commit_frequency;
-        self.top_contributors_by_lines = result.top_contributors_by_lines;
+        self.commit_frequency = result.commit_frequency.clone();
+        self.top_contributors_by_lines = result.top_contributors.clone();
         self.update_needed = true;
-        self.analysis_result = Some(result.clone());
+        self.analysis_result = Some(result);
         self.progress = None; // Clear progress when analysis is complete
     }
 
@@ -97,7 +97,12 @@ impl App {
         format!("{}:{}", self.selected_branch, self.selected_contributor)
     }
 
-    pub fn analyze_repo(&mut self) -> (mpsc::Receiver<ProgressEstimate>, impl std::future::Future<Output = Result<AnalysisResult, git2::Error>>) {
+    pub fn analyze_repo(
+        &mut self,
+    ) -> (
+        mpsc::Receiver<ProgressEstimate>,
+        impl std::future::Future<Output = Result<AnalysisResult, git2::Error>>,
+    ) {
         let (tx, rx) = mpsc::channel(32);
         let future = crate::analysis::analyze_repo_async(
             self.repo_path.clone(),
