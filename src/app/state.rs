@@ -2,8 +2,9 @@ use eframe::App as EApp;
 use egui::TextureHandle;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
 
-use crate::types::{AnalysisResult, CacheKey};
+use crate::types::{AnalysisResult, CacheKey, ProgressEstimate};
 
 /// Main application state
 #[derive(Clone)]
@@ -31,6 +32,9 @@ pub struct App {
     pub last_analysis_time: Option<f64>,
     pub commits_per_second: Option<f64>,
     pub processing_stats: String,
+    pub analysis_result: Option<AnalysisResult>,
+    pub error_message: Option<String>,
+    pub progress: Option<ProgressEstimate>,
 }
 
 impl App {
@@ -76,6 +80,8 @@ impl App {
         self.commit_frequency = result.commit_frequency;
         self.top_contributors_by_lines = result.top_contributors_by_lines;
         self.update_needed = true;
+        self.analysis_result = Some(result.clone());
+        self.progress = None; // Clear progress when analysis is complete
     }
 
     /// Get a cached result for the given branch and contributor
@@ -85,6 +91,38 @@ impl App {
             contributor: contributor.to_string(),
         };
         self.analysis_cache.get(&cache_key).cloned()
+    }
+
+    pub fn get_cache_key(&self) -> String {
+        format!("{}:{}", self.selected_branch, self.selected_contributor)
+    }
+
+    pub fn analyze_repo(&mut self) -> (mpsc::Receiver<ProgressEstimate>, impl std::future::Future<Output = Result<AnalysisResult, git2::Error>>) {
+        let (tx, rx) = mpsc::channel(32);
+        let future = crate::analysis::analyze_repo_async(
+            self.repo_path.clone(),
+            self.selected_branch.clone(),
+            self.selected_contributor.clone(),
+            Some(tx),
+        );
+        (rx, future)
+    }
+
+    pub fn update_progress(&mut self, progress: ProgressEstimate) {
+        self.progress = Some(progress);
+    }
+
+    pub fn format_progress(&self) -> Option<String> {
+        self.progress.as_ref().map(|p| {
+            format!(
+                "{:.1}% complete ({}/{} commits)\nEstimated time remaining: {:.1}s\nCommits/sec: {:.1}",
+                p.percent_complete(),
+                p.processed_commits,
+                p.total_commits,
+                p.estimated_remaining_time(),
+                p.commits_per_second
+            )
+        })
     }
 }
 
@@ -114,6 +152,9 @@ impl Default for App {
             last_analysis_time: None,
             commits_per_second: None,
             processing_stats: String::new(),
+            analysis_result: None,
+            error_message: None,
+            progress: None,
         }
     }
 }

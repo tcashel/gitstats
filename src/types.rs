@@ -46,3 +46,32 @@ pub struct AnalysisResult {
     /// Detailed processing statistics
     pub processing_stats: String,
 }
+
+/// Progress estimation for long-running operations
+#[derive(Debug, Clone)]
+pub struct ProgressEstimate {
+    pub total_commits: usize,
+    pub processed_commits: usize,
+    pub estimated_total_time: f64,
+    pub elapsed_time: f64,
+    pub commits_per_second: f64,
+}
+
+impl ProgressEstimate {
+    pub fn percent_complete(&self) -> f64 {
+        if self.total_commits == 0 {
+            0.0
+        } else {
+            (self.processed_commits as f64 / self.total_commits as f64) * 100.0
+        }
+    }
+
+    pub fn estimated_remaining_time(&self) -> f64 {
+        if self.commits_per_second == 0.0 {
+            0.0
+        } else {
+            let remaining_commits = self.total_commits - self.processed_commits;
+            remaining_commits as f64 / self.commits_per_second
+        }
+    }
+}
