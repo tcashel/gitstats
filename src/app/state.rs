@@ -2,8 +2,6 @@ use eframe::App as EApp;
 use egui::TextureHandle;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tokio::sync::watch;
-use tokio::time::{timeout, Duration};
 
 use crate::types::{AnalysisResult, CacheKey};
 
@@ -30,7 +28,9 @@ pub struct App {
     pub selected_contributor: String,
     pub available_branches: Vec<String>,
     pub analysis_cache: HashMap<CacheKey, AnalysisResult>,
-    pub cancel_sender: Option<watch::Sender<bool>>,
+    pub last_analysis_time: Option<f64>,
+    pub commits_per_second: Option<f64>,
+    pub processing_stats: String,
 }
 
 impl App {
@@ -61,6 +61,12 @@ impl App {
         };
         self.analysis_cache.insert(cache_key, result.clone());
 
+        // Update performance metrics
+        self.last_analysis_time = Some(result.elapsed_time);
+        self.commits_per_second = Some(result.commit_count as f64 / result.elapsed_time);
+        self.processing_stats = result.processing_stats;
+
+        // Update other stats
         self.commit_count = result.commit_count;
         self.total_lines_added = result.total_lines_added;
         self.total_lines_deleted = result.total_lines_deleted;
@@ -105,7 +111,9 @@ impl Default for App {
             selected_contributor: "All".to_string(),
             available_branches: Vec::new(),
             analysis_cache: HashMap::new(),
-            cancel_sender: None,
+            last_analysis_time: None,
+            commits_per_second: None,
+            processing_stats: String::new(),
         }
     }
 }

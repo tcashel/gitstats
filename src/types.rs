@@ -41,4 +41,8 @@ pub struct AnalysisResult {
     pub top_contributors_by_lines: Vec<(String, usize)>,
     /// List of available branches in the repository
     pub available_branches: Vec<String>,
+    /// Time taken to analyze the repository (in seconds)
+    pub elapsed_time: f64,
+    /// Detailed processing statistics
+    pub processing_stats: String,
 }

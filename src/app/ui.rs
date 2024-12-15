@@ -1,18 +1,10 @@
 use egui::{ComboBox, Context};
 use image::ImageReader;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use lazy_static::lazy_static;
 
 use super::App;
 use crate::analysis::analyze_repo_async;
 use crate::plotting::chart::generate_plot_async;
-
-// Progress tracking for long operations
-lazy_static! {
-    static ref ANALYSIS_PROGRESS: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
-    static ref PLOTTING_IN_PROGRESS: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
-}
 
 /// Draw the main application UI
 pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
@@ -90,6 +82,19 @@ pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
 
         ui.separator();
         ui.checkbox(&mut app.use_log_scale, "Log Scale");
+
+        // Performance metrics
+        if let Some(analysis_time) = app.last_analysis_time {
+            ui.separator();
+            ui.heading("Performance Metrics");
+            ui.label(format!("Analysis Time: {:.2}s", analysis_time));
+            if let Some(commits_per_sec) = app.commits_per_second {
+                ui.label(format!("Commits/sec: {:.1}", commits_per_sec));
+            }
+            if !app.processing_stats.is_empty() {
+                ui.label(&app.processing_stats);
+            }
+        }
     });
 
     egui::CentralPanel::default().show(ctx, |ui| {
@@ -106,28 +111,28 @@ pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
             let selected_contributor = app.selected_contributor.clone();
             app.is_analyzing = true;
 
-            tokio::spawn(async move {
-                match analyze_repo_async(repo_path, selected_branch, selected_contributor).await {
-                    Ok(result) => {
-                        if let Ok(mut app) = app_clone.lock() {
-                            app.update_with_result(result);
+            tokio::task::spawn_blocking(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async {
+                    match analyze_repo_async(repo_path, selected_branch, selected_contributor).await {
+                        Ok(result) => {
+                            if let Ok(mut app) = app_clone.lock() {
+                                app.update_with_result(result);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error: {}", e);
                         }
                     }
-                    Err(e) => {
-                        eprintln!("Error: {}", e);
+                    if let Ok(mut app) = app_clone.lock() {
+                        app.is_analyzing = false;
                     }
-                }
-                if let Ok(mut app) = app_clone.lock() {
-                    app.is_analyzing = false;
-                }
+                });
             });
         }
 
-        // Show progress indicators
         if app.is_analyzing {
-            let progress = ANALYSIS_PROGRESS.load(Ordering::Relaxed);
             ui.label("Analyzing... Please wait.");
-            ui.add(egui::ProgressBar::new(progress as f32 / 100.0));
             ui.spinner();
         }
 
@@ -169,37 +174,11 @@ pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
         let app_arc = app_arc.clone();
         let ctx = ctx.clone();
 
-        // Only start plotting if not already in progress
-        if !PLOTTING_IN_PROGRESS.load(Ordering::Relaxed) {
-            PLOTTING_IN_PROGRESS.store(true, Ordering::Relaxed);
-            
-            tokio::spawn(async move {
-                // Use a semaphore to limit concurrent plotting operations
-                static PLOT_SEMAPHORE: tokio::sync::OnceCell<tokio::sync::Semaphore> = tokio::sync::OnceCell::const_new();
-                let semaphore = PLOT_SEMAPHORE.get_or_init(|| async {
-                    tokio::sync::Semaphore::new(1) // Only allow one plotting operation at a time
-                }).await;
-                
-                let _permit = match semaphore.acquire().await {
-                    Ok(permit) => permit,
-                    Err(e) => {
-                        eprintln!("Failed to acquire plotting semaphore: {}", e);
-                        PLOTTING_IN_PROGRESS.store(false, Ordering::Relaxed);
-                        return;
-                    }
-                };
-
-                // Generate the plot asynchronously
-                let plot_result = generate_plot_async(app_clone).await;
-                match plot_result {
-                    Ok(plot_data) => {
-                        // Save the plot to disk
-                        if let Err(e) = tokio::fs::write(&plot_path, &plot_data).await {
-                            eprintln!("Failed to save plot: {}", e);
-                            PLOTTING_IN_PROGRESS.store(false, Ordering::Relaxed);
-                            return;
-                        }
-
+        tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                if let Ok(plot_data) = generate_plot_async(app_clone).await {
+                    if let Ok(_) = tokio::fs::write(&plot_path, &plot_data).await {
                         if let Some(image) = load_plot_texture_async(plot_path).await {
                             let texture = ctx.load_texture(
                                 "plot_texture",
@@ -211,58 +190,11 @@ pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
                             }
                         }
                     }
-                    Err(e) => {
-                        eprintln!("Plotting error: {}", e);
-                    }
                 }
-
-                PLOTTING_IN_PROGRESS.store(false, Ordering::Relaxed);
             });
-        }
+        });
         
         app.update_needed = false;
-    }
-}
-
-/// Handle selection changes asynchronously
-async fn handle_selection_change_async(
-    repo_path: String,
-    selected_branch: String,
-    selected_contributor: String,
-    app_arc: Arc<Mutex<App>>,
-    mut cancel_token: tokio::sync::watch::Receiver<bool>,
-) {
-    ANALYSIS_PROGRESS.store(0, Ordering::Relaxed);
-
-    let app_arc_clone = app_arc.clone();
-    let analysis_future = async move {
-        match analyze_repo_async(repo_path, selected_branch, selected_contributor).await {
-            Ok(result) => {
-                if let Ok(mut app) = app_arc_clone.lock() {
-                    app.update_with_result(result);
-                }
-            }
-            Err(e) => {
-                eprintln!("Error: {}", e);
-            }
-        }
-        ANALYSIS_PROGRESS.store(100, Ordering::Relaxed);
-        if let Ok(mut app) = app_arc_clone.lock() {
-            app.is_analyzing = false;
-        }
-    };
-
-    tokio::select! {
-        _ = cancel_token.changed() => {
-            // Update app state on cancellation
-            if let Ok(mut app) = app_arc.lock() {
-                app.is_analyzing = false;
-            }
-            ANALYSIS_PROGRESS.store(0, Ordering::Relaxed);
-        }
-        _ = analysis_future => {
-            // Analysis completed normally
-        }
     }
 }
 
@@ -279,17 +211,24 @@ fn handle_selection_change(app: &mut App, app_arc: Arc<Mutex<App>>) {
         let selected_contributor = app.selected_contributor.clone();
         app.is_analyzing = true;
 
-        // Create cancellation token
-        let (sender, receiver) = tokio::sync::watch::channel(false);
-        app.cancel_sender = Some(sender);
-        
-        tokio::spawn(handle_selection_change_async(
-            repo_path,
-            selected_branch,
-            selected_contributor,
-            app_arc,
-            receiver,
-        ));
+        tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                match analyze_repo_async(repo_path, selected_branch, selected_contributor).await {
+                    Ok(result) => {
+                        if let Ok(mut app) = app_arc.lock() {
+                            app.update_with_result(result);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                    }
+                }
+                if let Ok(mut app) = app_arc.lock() {
+                    app.is_analyzing = false;
+                }
+            });
+        });
     }
 }
 

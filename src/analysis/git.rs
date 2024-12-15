@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use git2::{Error, Repository, Oid};
 use std::collections::HashMap;
 use tokio::task::spawn_blocking;
+use std::time::Instant;
 
 use crate::types::AnalysisResult;
 
@@ -142,7 +143,10 @@ async fn process_commits_parallel(
     commits: Vec<Oid>,
     contributor: String,
     _chunk_size: usize,
-) -> Result<(usize, usize, usize, Vec<(String, usize, usize)>, HashMap<String, usize>), Error> {
+) -> Result<(usize, usize, usize, Vec<(String, usize, usize)>, HashMap<String, usize>, String), Error> {
+    let start_time = Instant::now();
+    let total_commits = commits.len();
+
     let optimal_chunk_size = get_optimal_chunk_size(commits.len());
     let chunks: Vec<_> = commits.chunks(optimal_chunk_size).collect();
     let mut results = Vec::with_capacity(chunks.len());
@@ -161,7 +165,7 @@ async fn process_commits_parallel(
         };
 
         let handle = tokio::spawn(async move {
-            let _permit = permit; // Keep permit alive for the duration of the task
+            let _permit = permit;
             let result = spawn_blocking(move || {
                 let repo = Repository::open(repo_path)?;
                 process_commit_chunk(&repo, &chunk, &contributor)
@@ -194,14 +198,25 @@ async fn process_commits_parallel(
             }
             Ok(Err(e)) => {
                 eprintln!("Error processing commit chunk: {}", e);
-                // Could implement retry logic here if needed
             }
             Err(e) => {
                 eprintln!("Task join error: {}", e);
-                // Could implement retry logic here if needed
             }
         }
     }
+
+    let elapsed = start_time.elapsed();
+    let elapsed_secs = elapsed.as_secs_f64();
+    let commits_per_sec = total_commits as f64 / elapsed_secs;
+
+    let stats = format!(
+        "Processed {} commits in {:.2}s\nCommits/sec: {:.1}\nChunk size: {}\nParallel tasks: {}",
+        total_commits,
+        elapsed_secs,
+        commits_per_sec,
+        optimal_chunk_size,
+        max_tasks
+    );
 
     Ok((
         total_commit_count,
@@ -209,6 +224,7 @@ async fn process_commits_parallel(
         total_lines_deleted,
         total_commit_activity,
         total_author_count,
+        stats,
     ))
 }
 
@@ -218,13 +234,14 @@ async fn analyze_repo_with_filter(
     branch: &str,
     contributor: &str,
 ) -> Result<AnalysisResult, Error> {
+    let start_time = Instant::now();
     let repo_path = repo.path().to_path_buf();
     let branch = branch.to_string();
     let contributor = contributor.to_string();
 
     // Get commits in a blocking task
     let commits = {
-        let repo_path = repo_path.clone(); // Clone here for the closure
+        let repo_path = repo_path.clone();
         spawn_blocking(move || {
             let repo = Repository::open(&repo_path)?;
             let mut revwalk = repo.revwalk()?;
@@ -247,7 +264,7 @@ async fn analyze_repo_with_filter(
     };
 
     // Process commits in parallel chunks
-    let (commit_count, total_lines_added, total_lines_deleted, commit_activity, author_commit_count) =
+    let (commit_count, total_lines_added, total_lines_deleted, commit_activity, author_commit_count, stats) =
         process_commits_parallel(repo_path.clone(), commits, contributor.clone(), 1000).await?;
 
     let mut top_contributors: Vec<(String, usize)> = author_commit_count.clone().into_iter().collect();
@@ -272,7 +289,7 @@ async fn analyze_repo_with_filter(
 
     // Get branches in a separate blocking task
     let branch_names = {
-        let repo_path = repo_path.clone(); // Clone here for the closure
+        let repo_path = repo_path.clone();
         spawn_blocking(move || {
             let repo = Repository::open(repo_path)?;
             let mut branch_names = Vec::new();
@@ -295,6 +312,9 @@ async fn analyze_repo_with_filter(
         .map_err(|e| Error::from_str(&e.to_string()))?
     };
 
+    let elapsed = start_time.elapsed();
+    let elapsed_secs = elapsed.as_secs_f64();
+
     Ok(AnalysisResult {
         commit_count,
         total_lines_added,
@@ -305,5 +325,7 @@ async fn analyze_repo_with_filter(
         commit_frequency,
         top_contributors_by_lines,
         available_branches: branch_names,
+        elapsed_time: elapsed_secs,
+        processing_stats: stats,
     })
 }
