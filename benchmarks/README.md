@@ -22,16 +22,6 @@ cp -r target/criterion/* benchmarks/baselines/$(date +%Y%m%d)
 cp -r target/criterion/* benchmarks/baseline
 ```
 
-## Running Benchmarks
-
-```bash
-# Run benchmarks against current baseline
-cargo bench -- --baseline benchmarks/baseline
-
-# Run benchmarks against specific historical baseline
-cargo bench -- --baseline benchmarks/baselines/20231201
-```
-
 ## Saving New Baselines
 
 ```bash

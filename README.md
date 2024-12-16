@@ -129,6 +129,7 @@ GitStats includes comprehensive benchmarks to measure and track performance:
 
 #### Benchmark Results
 
+Current benchmarks are here: [https://tcashel.github.io/gitstats/benchmarks/](https://tcashel.github.io/gitstats/benchmarks/)
 Benchmark results are generated using criterion.rs and include:
 
 - Statistical analysis

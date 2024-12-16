@@ -2,8 +2,9 @@ use eframe::App as EApp;
 use egui::TextureHandle;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc;
 
-use crate::types::{AnalysisResult, CacheKey};
+use crate::types::{AnalysisResult, CacheKey, ProgressEstimate};
 
 /// Main application state
 #[derive(Clone)]
@@ -28,6 +29,12 @@ pub struct App {
     pub selected_contributor: String,
     pub available_branches: Vec<String>,
     pub analysis_cache: HashMap<CacheKey, AnalysisResult>,
+    pub last_analysis_time: Option<f64>,
+    pub commits_per_second: Option<f64>,
+    pub processing_stats: String,
+    pub analysis_result: Option<AnalysisResult>,
+    pub error_message: Option<String>,
+    pub progress: Option<ProgressEstimate>,
 }
 
 impl App {
@@ -58,15 +65,23 @@ impl App {
         };
         self.analysis_cache.insert(cache_key, result.clone());
 
+        // Update performance metrics
+        self.last_analysis_time = Some(result.elapsed_time);
+        self.commits_per_second = Some(result.commit_count as f64 / result.elapsed_time);
+        self.processing_stats = result.processing_stats.clone();
+
+        // Update other stats
         self.commit_count = result.commit_count;
         self.total_lines_added = result.total_lines_added;
         self.total_lines_deleted = result.total_lines_deleted;
-        self.top_contributors = result.top_contributors;
-        self.commit_activity = result.commit_activity;
+        self.top_contributors = result.top_contributors.clone();
+        self.commit_activity = result.commit_activity.clone();
         self.average_commit_size = result.average_commit_size;
-        self.commit_frequency = result.commit_frequency;
-        self.top_contributors_by_lines = result.top_contributors_by_lines;
+        self.commit_frequency = result.commit_frequency.clone();
+        self.top_contributors_by_lines = result.top_contributors.clone();
         self.update_needed = true;
+        self.analysis_result = Some(result);
+        self.progress = None; // Clear progress when analysis is complete
     }
 
     /// Get a cached result for the given branch and contributor
@@ -76,6 +91,43 @@ impl App {
             contributor: contributor.to_string(),
         };
         self.analysis_cache.get(&cache_key).cloned()
+    }
+
+    pub fn get_cache_key(&self) -> String {
+        format!("{}:{}", self.selected_branch, self.selected_contributor)
+    }
+
+    pub fn analyze_repo(
+        &mut self,
+    ) -> (
+        mpsc::Receiver<ProgressEstimate>,
+        impl std::future::Future<Output = Result<AnalysisResult, git2::Error>>,
+    ) {
+        let (tx, rx) = mpsc::channel(32);
+        let future = crate::analysis::analyze_repo_async(
+            self.repo_path.clone(),
+            self.selected_branch.clone(),
+            self.selected_contributor.clone(),
+            Some(tx),
+        );
+        (rx, future)
+    }
+
+    pub fn update_progress(&mut self, progress: ProgressEstimate) {
+        self.progress = Some(progress);
+    }
+
+    pub fn format_progress(&self) -> Option<String> {
+        self.progress.as_ref().map(|p| {
+            format!(
+                "{:.1}% complete ({}/{} commits)\nEstimated time remaining: {:.1}s\nCommits/sec: {:.1}",
+                p.percent_complete(),
+                p.processed_commits,
+                p.total_commits,
+                p.estimated_remaining_time(),
+                p.commits_per_second
+            )
+        })
     }
 }
 
@@ -102,6 +154,12 @@ impl Default for App {
             selected_contributor: "All".to_string(),
             available_branches: Vec::new(),
             analysis_cache: HashMap::new(),
+            last_analysis_time: None,
+            commits_per_second: None,
+            processing_stats: String::new(),
+            analysis_result: None,
+            error_message: None,
+            progress: None,
         }
     }
 }
@@ -113,7 +171,10 @@ pub struct AppWrapper {
 
 impl EApp for AppWrapper {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let mut app = self.app.lock().unwrap();
-        super::ui::draw_ui(&mut app, ctx, Arc::clone(&self.app));
+        if let Ok(mut app) = self.app.lock() {
+            super::ui::draw_ui(&mut app, ctx, Arc::clone(&self.app));
+        } else {
+            eprintln!("Failed to acquire app lock in update");
+        }
     }
 }
