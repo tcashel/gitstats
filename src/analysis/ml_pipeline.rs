@@ -119,7 +119,7 @@ impl AnomalyDetector {
     }
 
     /// Train the anomaly detector
-    pub async fn train(&mut self, features: &[CommitFeatures]) -> Result<(), RustBertError> {
+    pub fn train(&mut self, features: &[CommitFeatures]) -> Result<(), RustBertError> {
         let inputs = self.prepare_input(features);
         let input_refs: Vec<&str> = inputs.iter().map(String::as_str).collect();
         
@@ -128,7 +128,7 @@ impl AnomalyDetector {
         
         // Calculate threshold from predictions
         let scores: Vec<f32> = outputs.iter()
-            .map(|output| output.score as f32) // Access score field directly
+            .map(|output| output.score as f32)
             .collect();
         
         let mut sorted_scores = scores.clone();
@@ -142,7 +142,7 @@ impl AnomalyDetector {
     }
 
     /// Detect anomalies in new commits
-    pub async fn detect_anomalies(&self, features: &mut [CommitFeatures]) -> Result<(), RustBertError> {
+    pub fn detect_anomalies(&self, features: &mut [CommitFeatures]) -> Result<(), RustBertError> {
         let inputs = self.prepare_input(features);
         let input_refs: Vec<&str> = inputs.iter().map(String::as_str).collect();
         
@@ -151,7 +151,7 @@ impl AnomalyDetector {
         
         // Update anomaly scores
         for (feature, output) in features.iter_mut().zip(outputs.iter()) {
-            let score = output.score as f32; // Access score field directly
+            let score = output.score as f32;
             feature.anomaly_score = Some(score);
             feature.is_anomalous = Some(score > self.threshold);
         }
@@ -261,6 +261,22 @@ impl CommitAnalyzer {
     }
 }
 
+pub async fn detect_anomalies(result: &AnalysisResult) -> Result<Vec<CommitFeatures>, RustBertError> {
+    let features = prepare_commit_features(result);
+    let features_clone = features.clone();
+    
+    // Run model operations in a blocking task
+    let mut features = tokio::task::spawn_blocking(move || {
+        let mut detector = AnomalyDetector::new()?;
+        let mut features = features_clone;
+        detector.train(&features)?;
+        detector.detect_anomalies(&mut features)?;
+        Ok::<_, RustBertError>(features)
+    }).await.unwrap()?;
+    
+    Ok(features)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,5 +307,21 @@ mod tests {
         // Verify anomaly detection
         assert!(features[2].is_anomalous.unwrap(), "Large commit should be detected as anomalous");
         assert!(!features[0].is_anomalous.unwrap(), "Small commit should not be anomalous");
+    }
+
+    #[tokio::test]
+    async fn test_anomaly_detection_pipeline() {
+        let result = AnalysisResult {
+            commit_activity: vec![
+                ("2024-01-01".to_string(), 10, 5),
+                ("2024-01-02".to_string(), 20, 10),
+                ("2024-01-03".to_string(), 1000, 500), // Anomalous
+            ],
+            ..Default::default()
+        };
+        
+        let anomalies = detect_anomalies(&result).await.unwrap();
+        assert!(anomalies.len() == 3);
+        assert!(anomalies[2].is_anomalous.unwrap());
     }
 } 
