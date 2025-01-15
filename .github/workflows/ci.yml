@@ -33,7 +33,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test
         
   macos:
     name: Test (macOS)
@@ -53,7 +53,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test
         
   fedora:
     name: Test (Fedora)
@@ -67,6 +67,7 @@ jobs:
           dnf update -y
           dnf install -y \
             gcc \
+            gcc-c++ \
             gtk3-devel \
             openssl-devel \
             libxcb-devel \
@@ -78,7 +79,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test
         
   lint:
     name: Lint
