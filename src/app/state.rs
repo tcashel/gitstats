@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
+use crate::analysis::ml_pipeline::CommitFeatures;
+
 use crate::types::{AnalysisResult, CacheKey, ProgressEstimate};
 
 /// Main application state
@@ -35,6 +37,7 @@ pub struct App {
     pub analysis_result: Option<AnalysisResult>,
     pub error_message: Option<String>,
     pub progress: Option<ProgressEstimate>,
+    pub anomalies: Option<Vec<CommitFeatures>>,
 }
 
 impl App {
@@ -129,6 +132,11 @@ impl App {
             )
         })
     }
+
+    pub fn update_anomalies(&mut self, anomalies: Vec<CommitFeatures>) {
+        self.anomalies = Some(anomalies);
+        self.update_needed = true;
+    }
 }
 
 impl Default for App {
@@ -160,6 +168,7 @@ impl Default for App {
             analysis_result: None,
             error_message: None,
             progress: None,
+            anomalies: None,
         }
     }
 }

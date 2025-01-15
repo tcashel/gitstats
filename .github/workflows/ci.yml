@@ -9,9 +9,14 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   ubuntu:
     name: Test (Ubuntu)
+    needs: [lint]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -34,10 +39,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
         
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test
         
   macos:
     name: Test (macOS)
+    needs: [lint]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v3
@@ -54,10 +60,11 @@ jobs:
         uses: Swatinem/rust-cache@v2
         
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test
         
   fedora:
     name: Test (Fedora)
+    needs: [lint]
     runs-on: ubuntu-latest
     container: fedora:latest
     steps:
@@ -68,24 +75,41 @@ jobs:
           dnf update -y
           dnf install -y \
             gcc \
+            gcc-c++ \
             gtk3-devel \
             openssl-devel \
             libxcb-devel \
             libxkbcommon-devel \
             curl \
-            pkg-config
-            
+            pkg-config \
+            git
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test
         
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+      
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-dev \
+            libssl-dev \
+            libfontconfig-dev
       
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -164,7 +188,7 @@ jobs:
 
   docs:
     name: Documentation
-    needs: [ubuntu, macos, fedora, lint]
+    needs: [lint, ubuntu, macos, fedora]
     runs-on: ubuntu-latest
     permissions:
       contents: write
