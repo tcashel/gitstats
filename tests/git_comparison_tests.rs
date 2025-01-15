@@ -1,10 +1,10 @@
 use gitstats::analysis::analyze_repo_async;
+use std::env;
+use std::io;
 use std::path::Path;
+use std::path::PathBuf;
 use std::process::Command;
 use tempfile::TempDir;
-use std::env;
-use std::path::PathBuf;
-use std::io;
 
 fn run_git_command(repo_path: &Path, args: &[&str]) -> String {
     Command::new("git")
