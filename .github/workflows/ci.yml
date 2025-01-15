@@ -16,6 +16,7 @@ concurrency:
 jobs:
   ubuntu:
     name: Test (Ubuntu)
+    needs: [lint]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -42,6 +43,7 @@ jobs:
         
   macos:
     name: Test (macOS)
+    needs: [lint]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v3
@@ -62,6 +64,7 @@ jobs:
         
   fedora:
     name: Test (Fedora)
+    needs: [lint]
     runs-on: ubuntu-latest
     container: fedora:latest
     steps:
@@ -182,7 +185,7 @@ jobs:
 
   docs:
     name: Documentation
-    needs: [ubuntu, macos, fedora, lint]
+    needs: [lint, ubuntu, macos, fedora]
     runs-on: ubuntu-latest
     permissions:
       contents: write
