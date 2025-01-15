@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
-use crate::types::{AnalysisResult, CacheKey, ProgressEstimate};
 use crate::analysis::ml_pipeline::CommitFeatures;
+use crate::types::{AnalysisResult, CacheKey, ProgressEstimate};
 
 /// Main application state
 #[derive(Clone)]

@@ -21,7 +21,7 @@ pub struct CacheKey {
 ///
 /// This struct contains all the statistics and metrics collected from analyzing
 /// a Git repository, including commit counts, line changes, and contributor information.
-#[derive(Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct AnalysisResult {
     /// Total number of commits analyzed
     pub commit_count: usize,

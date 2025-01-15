@@ -184,14 +184,14 @@ pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
             if ui.button("Detect Anomalies").clicked() && !app.is_analyzing {
                 let app_clone = app_arc.clone();
                 let result_clone = result.clone();
-                
+
                 tokio::spawn(async move {
                     // Set analyzing flag
                     {
                         let mut app = app_clone.lock().unwrap();
                         app.is_analyzing = true;
                     }
-                    
+
                     // Perform anomaly detection
                     match detect_anomalies(&result_clone).await {
                         Ok(anomalies) => {
@@ -202,7 +202,8 @@ pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
                         }
                         Err(e) => {
                             if let Ok(mut app) = app_clone.lock() {
-                                app.error_message = Some(format!("Anomaly detection failed: {}", e));
+                                app.error_message =
+                                    Some(format!("Anomaly detection failed: {}", e));
                                 app.is_analyzing = false;
                             }
                         }
@@ -212,18 +213,28 @@ pub fn draw_ui(app: &mut App, ctx: &Context, app_arc: Arc<Mutex<App>>) {
 
             // Display anomalies if available
             if let Some(anomalies) = &app.anomalies {
-                ui.label(format!("Found {} anomalous commits", 
-                    anomalies.iter().filter(|a| a.is_anomalous.unwrap_or(false)).count()));
-                
+                ui.label(format!(
+                    "Found {} anomalous commits",
+                    anomalies
+                        .iter()
+                        .filter(|a| a.is_anomalous.unwrap_or(false))
+                        .count()
+                ));
+
                 // Show top anomalies
-                for feature in anomalies.iter()
+                for feature in anomalies
+                    .iter()
                     .filter(|a| a.is_anomalous.unwrap_or(false))
-                    .take(5) 
+                    .take(5)
                 {
                     ui.label(format!(
                         "Anomaly score: {:.2} ({})",
                         feature.anomaly_score.unwrap_or(0.0),
-                        if feature.is_anomalous.unwrap_or(false) { "Anomalous" } else { "Normal" }
+                        if feature.is_anomalous.unwrap_or(false) {
+                            "Anomalous"
+                        } else {
+                            "Normal"
+                        }
                     ));
                 }
             }

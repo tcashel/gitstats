@@ -21,7 +21,7 @@ fn get_git_line_stats(repo_path: &Path) -> (usize, usize) {
     let output = run_git_command(repo_path, &["log", "--numstat"]);
     let mut added = 0;
     let mut deleted = 0;
-    
+
     for line in output.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 2 {
@@ -45,10 +45,10 @@ async fn test_commit_count_accuracy() {
         .expect("Failed to clone ripgrep repository");
 
     let repo_path = temp_dir.path();
-    
+
     // Get git's count
     let git_count = get_git_commit_count(repo_path);
-    
+
     // Get our count
     let result = analyze_repo_async(
         repo_path.to_str().unwrap().to_string(),
@@ -60,11 +60,9 @@ async fn test_commit_count_accuracy() {
     .unwrap();
 
     assert_eq!(
-        git_count, 
-        result.commit_count,
+        git_count, result.commit_count,
         "Commit counts don't match! Git: {}, Ours: {}",
-        git_count,
-        result.commit_count
+        git_count, result.commit_count
     );
 }
 
@@ -80,10 +78,10 @@ async fn test_line_stats_accuracy() {
         .expect("Failed to clone ripgrep repository");
 
     let repo_path = temp_dir.path();
-    
+
     // Get git's stats
     let (git_added, git_deleted) = get_git_line_stats(repo_path);
-    
+
     // Get our stats
     let result = analyze_repo_async(
         repo_path.to_str().unwrap().to_string(),
@@ -95,19 +93,14 @@ async fn test_line_stats_accuracy() {
     .unwrap();
 
     assert_eq!(
-        git_added,
-        result.total_lines_added,
+        git_added, result.total_lines_added,
         "Lines added don't match! Git: {}, Ours: {}",
-        git_added,
-        result.total_lines_added
+        git_added, result.total_lines_added
     );
 
     assert_eq!(
-        git_deleted,
-        result.total_lines_deleted,
+        git_deleted, result.total_lines_deleted,
         "Lines deleted don't match! Git: {}, Ours: {}",
-        git_deleted,
-        result.total_lines_deleted
+        git_deleted, result.total_lines_deleted
     );
-} 
- 
+}
