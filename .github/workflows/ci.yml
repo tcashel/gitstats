@@ -83,10 +83,13 @@ jobs:
             curl \
             pkg-config \
             git
-            
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Run tests
         run: cargo test
         
