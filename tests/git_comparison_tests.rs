@@ -2,6 +2,9 @@ use gitstats::analysis::analyze_repo_async;
 use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
+use std::env;
+use std::path::PathBuf;
+use std::io;
 
 fn run_git_command(repo_path: &Path, args: &[&str]) -> String {
     Command::new("git")
@@ -34,10 +37,27 @@ fn get_git_line_stats(repo_path: &Path) -> (usize, usize) {
     (added, deleted)
 }
 
+fn get_temp_dir() -> io::Result<TempDir> {
+    // Try common temp directories in order of preference
+    let temp_paths = [
+        env::temp_dir(),
+        PathBuf::from("/tmp"),
+        PathBuf::from("."), // Fallback to current directory
+    ];
+
+    for path in temp_paths {
+        if let Ok(dir) = TempDir::new_in(path) {
+            return Ok(dir);
+        }
+    }
+
+    // If all attempts fail, try one last time with default location and propagate the error
+    TempDir::new()
+}
+
 #[tokio::test]
 async fn test_commit_count_accuracy() {
-    // Set up test repo (using the same setup as benchmarks)
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = get_temp_dir().expect("Failed to create temporary directory");
     Command::new("git")
         .current_dir(&temp_dir)
         .args(&["clone", "https://github.com/BurntSushi/ripgrep.git", "."])
@@ -69,8 +89,7 @@ async fn test_commit_count_accuracy() {
 #[tokio::test]
 #[ignore]
 async fn test_line_stats_accuracy() {
-    // Set up test repo
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = get_temp_dir().expect("Failed to create temporary directory");
     Command::new("git")
         .current_dir(&temp_dir)
         .args(&["clone", "https://github.com/BurntSushi/ripgrep.git", "."])

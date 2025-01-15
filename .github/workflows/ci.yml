@@ -9,6 +9,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   ubuntu:
     name: Test (Ubuntu)
@@ -74,7 +78,8 @@ jobs:
             libxcb-devel \
             libxkbcommon-devel \
             curl \
-            pkg-config
+            pkg-config \
+            git
             
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
