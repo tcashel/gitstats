@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 use crate::analysis::ml_pipeline::CommitFeatures;
+
 use crate::types::{AnalysisResult, CacheKey, ProgressEstimate};
 
 /// Main application state
@@ -136,6 +137,7 @@ impl App {
         self.anomalies = Some(anomalies);
         self.update_needed = true;
     }
+
 }
 
 impl Default for App {
@@ -168,6 +170,7 @@ impl Default for App {
             error_message: None,
             progress: None,
             anomalies: None,
+
         }
     }
 }
