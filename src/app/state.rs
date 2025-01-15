@@ -137,7 +137,6 @@ impl App {
         self.anomalies = Some(anomalies);
         self.update_needed = true;
     }
-
 }
 
 impl Default for App {
@@ -170,7 +169,6 @@ impl Default for App {
             error_message: None,
             progress: None,
             anomalies: None,
-
         }
     }
 }
