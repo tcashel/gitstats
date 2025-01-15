@@ -1,0 +1,9 @@
+(function() {
+    var implementors = Object.fromEntries([["gitstats",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.84.0/core/default/trait.Default.html\" title=\"trait core::default::Default\">Default</a> for <a class=\"struct\" href=\"gitstats/analysis/struct.CacheManager.html\" title=\"struct gitstats::analysis::CacheManager\">CacheManager</a>"],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.84.0/core/default/trait.Default.html\" title=\"trait core::default::Default\">Default</a> for <a class=\"struct\" href=\"gitstats/app/struct.App.html\" title=\"struct gitstats::app::App\">App</a>"],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.84.0/core/default/trait.Default.html\" title=\"trait core::default::Default\">Default</a> for <a class=\"struct\" href=\"gitstats/plotting/struct.ChartStyle.html\" title=\"struct gitstats::plotting::ChartStyle\">ChartStyle</a>"],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.84.0/core/default/trait.Default.html\" title=\"trait core::default::Default\">Default</a> for <a class=\"struct\" href=\"gitstats/plotting/struct.ChartTheme.html\" title=\"struct gitstats::plotting::ChartTheme\">ChartTheme</a>"],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.84.0/core/default/trait.Default.html\" title=\"trait core::default::Default\">Default</a> for <a class=\"struct\" href=\"gitstats/types/struct.AnalysisResult.html\" title=\"struct gitstats::types::AnalysisResult\">AnalysisResult</a>"]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":57,"fragment_lengths":[1445]}
